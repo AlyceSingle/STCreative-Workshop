@@ -8,7 +8,7 @@ const __dirname = dirname(__filename);
 
 // 配置区域
 const SSH_CONFIG = {
-  host: 'lkm',
+  host: 'single',
   user: 'root',
   port: 22
 };
@@ -27,6 +27,8 @@ const SERVICE_NAME = 'STCreativeWorkshop.service';
 // 工具函数
 function runCommand(command) {
   try {
+    console.log(command)
+
     execSync(command, { stdio: 'pipe', cwd: __dirname });
   } catch (error) {
     console.error(`[错误] 命令执行失败: ${error.message}`);
@@ -80,18 +82,32 @@ function deployBackend() {
   const remotePath = `${PATHS.remoteBackendPath}/${PATHS.remoteBackendName}`;
   const backupPath = `${remotePath}.backup.${getTimestamp()}`;
   const tempBackupDir = `/tmp/stcw-backup-${getTimestamp()}`;
+  const localTarPath = join(__dirname, 'backend-deploy.tar.gz');
+  const remoteTarPath = `/tmp/backend-deploy-${getTimestamp()}.tar.gz`;
+  
+  // 在本地打包，排除 node_modules 和 .env
+  console.log('[后端] 正在打包...');
+  runCommand(`cd "${PATHS.backendDir}" && tar -czf "${localTarPath}" --exclude=node_modules --exclude=.env .`);
   
   runCommand(`ssh ${sshConn} "systemctl stop ${SERVICE_NAME} || true"`);
   runCommand(`ssh ${sshConn} "if [ -d ${remotePath} ]; then cp -r ${remotePath} ${backupPath}; fi"`);
   runCommand(`ssh ${sshConn} "mkdir -p ${tempBackupDir} && if [ -f ${remotePath}/.env ]; then cp ${remotePath}/.env ${tempBackupDir}/.env; fi && if [ -f ${remotePath}/db/stories.db ]; then cp ${remotePath}/db/stories.db ${tempBackupDir}/stories.db; fi"`);
   runCommand(`ssh ${sshConn} "mkdir -p ${PATHS.remoteBackendPath}"`);
-  runCommand(`ssh ${sshConn} "if [ -d ${remotePath} ]; then rm -rf ${remotePath}/*; fi"`);
-  runCommand(`scp -r "${PATHS.backendDir}"/* ${sshConn}:${remotePath}/`);
+  runCommand(`ssh ${sshConn} "if [ -d ${remotePath} ]; then rm -rf ${remotePath}; fi && mkdir -p ${remotePath}"`);
+  
+  // 上传压缩包并解压
+  console.log('[后端] 正在上传...');
+  runCommand(`scp "${localTarPath}" ${sshConn}:${remoteTarPath}`);
+  runCommand(`ssh ${sshConn} "mkdir -p ${remotePath} && cd ${remotePath} && tar -xzf ${remoteTarPath} && rm ${remoteTarPath}"`);
+  
+  // 清理本地临时文件
+  runCommand(`del /f /q "${localTarPath}"`);
+  
   runCommand(`ssh ${sshConn} "if [ -f ${tempBackupDir}/.env ]; then cp ${tempBackupDir}/.env ${remotePath}/.env; fi && if [ -f ${tempBackupDir}/stories.db ]; then mkdir -p ${remotePath}/db && cp ${tempBackupDir}/stories.db ${remotePath}/db/stories.db; fi && rm -rf ${tempBackupDir}"`);
   runCommand(`ssh ${sshConn} "rm -f ${remotePath}/.env.example"`);
   
   console.log('[后端] 安装依赖中...');
-  runCommand(`ssh ${sshConn} "cd ${remotePath} && npm install --production"`);
+  runCommand(`ssh ${sshConn} "bash -lc 'cd ${remotePath} && npm install --production'"`);
   
   runCommand(`ssh ${sshConn} "systemctl start ${SERVICE_NAME}"`);
   

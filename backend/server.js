@@ -133,7 +133,7 @@ app.use('/api/stories', storiesRouter);
 app.use('/api/tags', tagsRouter);
 app.use('/api/workshop', workshopRouter);
 app.use('/api/creator', creatorRouter);
-app.use('/admin', adminRouter);
+app.use('/api/admin', adminRouter);
 
 // ─── 健康检查 ─────────────────────────────────────────────────────
 app.get('/api/health', (req, res) => {

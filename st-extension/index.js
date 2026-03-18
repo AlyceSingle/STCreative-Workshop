@@ -8,7 +8,7 @@
 import { getContext } from '../../../extensions.js';
 
 // ← 部署后将此处替换为你的工坊完整 URL
-const WORKSHOP_URL = 'http://localhost:5173/';
+const WORKSHOP_URL = 'https://st.alyce.uno/';
 
 let workshopOverlay = null;
 let workshopIframe = null;

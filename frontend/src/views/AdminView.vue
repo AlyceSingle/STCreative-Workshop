@@ -13,7 +13,7 @@ const loginLoading = ref(false)
 
 async function checkLogin() {
   try {
-    const res = await fetch('/admin/me', { credentials: 'include' })
+    const res = await fetch('/api/admin/me', { credentials: 'include' })
     adminLoggedIn.value = res.ok
   } catch {
     adminLoggedIn.value = false
@@ -24,7 +24,7 @@ async function doLogin() {
   loginError.value = ''
   loginLoading.value = true
   try {
-    const res = await fetch('/admin/login', {
+    const res = await fetch('/api/admin/login', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -46,7 +46,7 @@ async function doLogin() {
 }
 
 async function doLogout() {
-  await fetch('/admin/logout', { method: 'POST', credentials: 'include' })
+  await fetch('/api/admin/logout', { method: 'POST', credentials: 'include' })
   adminLoggedIn.value = false
 }
 
@@ -73,7 +73,7 @@ const reviewLoading = ref(false)
 async function loadApplications() {
   appLoading.value = true
   try {
-    const res = await fetch(`/admin/applications?status=${appFilter.value}`, { credentials: 'include' })
+    const res = await fetch(`/api/admin/applications?status=${appFilter.value}`, { credentials: 'include' })
     const data = await res.json()
     applications.value = data.data || []
   } catch {
@@ -92,7 +92,7 @@ async function submitReview() {
   if (!reviewModal.value) return
   reviewLoading.value = true
   try {
-    const res = await fetch(`/admin/applications/${reviewModal.value.app.id}`, {
+    const res = await fetch(`/api/admin/applications/${reviewModal.value.app.id}`, {
       method: 'PUT',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
@@ -119,7 +119,7 @@ async function loadUsers(page = 1) {
   userPage.value = page
   try {
     const q = userQuery.value ? `&q=${encodeURIComponent(userQuery.value)}` : ''
-    const res = await fetch(`/admin/users?page=${page}&limit=20${q}`, { credentials: 'include' })
+    const res = await fetch(`/api/admin/users?page=${page}&limit=20${q}`, { credentials: 'include' })
     const data = await res.json()
     users.value = data.data || []
     userPagination.value = data.pagination || {}
@@ -132,7 +132,7 @@ async function loadUsers(page = 1) {
 
 async function changeRole(userId, role) {
   if (!confirm(`确认将此用户角色改为「${roleLabel(role)}」？`)) return
-  await fetch(`/admin/users/${userId}/role`, {
+  await fetch(`/api/admin/users/${userId}/role`, {
     method: 'PUT',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -143,14 +143,14 @@ async function changeRole(userId, role) {
 
 async function deleteUser(userId, username) {
   if (!confirm(`确认删除用户「${username}」？此操作不可恢复，其所有模组也将被删除。`)) return
-  await fetch(`/admin/users/${userId}`, { method: 'DELETE', credentials: 'include' })
+  await fetch(`/api/admin/users/${userId}`, { method: 'DELETE', credentials: 'include' })
   await loadUsers(userPage.value)
 }
 
 async function changeBanStatus(userId, isBanned, username) {
   const action = isBanned ? '封禁' : '解封'
   if (!confirm(`确认${action}用户「${username}」？`)) return
-  await fetch(`/admin/users/${userId}/ban`, {
+  await fetch(`/api/admin/users/${userId}/ban`, {
     method: 'PUT',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -171,7 +171,7 @@ async function loadPacks(page = 1) {
   packPage.value = page
   try {
     const q = packQuery.value ? `&q=${encodeURIComponent(packQuery.value)}` : ''
-    const res = await fetch(`/admin/packs?page=${page}&limit=20${q}`, { credentials: 'include' })
+    const res = await fetch(`/api/admin/packs?page=${page}&limit=20${q}`, { credentials: 'include' })
     const data = await res.json()
     packs.value = data.data || []
     packPagination.value = data.pagination || {}
@@ -184,7 +184,7 @@ async function loadPacks(page = 1) {
 
 async function deletePack(packId, title) {
   if (!confirm(`确认删除模组「${title}」？`)) return
-  await fetch(`/admin/packs/${packId}`, { method: 'DELETE', credentials: 'include' })
+  await fetch(`/api/admin/packs/${packId}`, { method: 'DELETE', credentials: 'include' })
   await loadPacks(packPage.value)
 }
 
@@ -196,7 +196,7 @@ const workshopAppsLoading = ref(false)
 async function loadWorkshopApps() {
   workshopAppsLoading.value = true
   try {
-    const res = await fetch(`/admin/workshops?status=${workshopAppFilter.value}`, { credentials: 'include' })
+    const res = await fetch(`/api/admin/workshops?status=${workshopAppFilter.value}`, { credentials: 'include' })
     const data = await res.json()
     workshopApps.value = data.data || []
   } catch {
@@ -208,13 +208,13 @@ async function loadWorkshopApps() {
 
 async function approveWorkshop(id) {
   if (!confirm('确认通过该工坊申请？')) return
-  await fetch(`/admin/workshops/${id}/approve`, { method: 'POST', credentials: 'include' })
+  await fetch(`/api/admin/workshops/${id}/approve`, { method: 'POST', credentials: 'include' })
   await loadWorkshopApps()
 }
 
 async function rejectWorkshop(id) {
   if (!confirm('确认拒绝该工坊申请？')) return
-  await fetch(`/admin/workshops/${id}/reject`, { method: 'POST', credentials: 'include' })
+  await fetch(`/api/admin/workshops/${id}/reject`, { method: 'POST', credentials: 'include' })
   await loadWorkshopApps()
 }
 
@@ -225,7 +225,7 @@ const allWorkshopsLoading = ref(false)
 async function loadAllWorkshops() {
   allWorkshopsLoading.value = true
   try {
-    const res = await fetch('/admin/workshops?status=all', { credentials: 'include' })
+    const res = await fetch('/api/admin/workshops?status=all', { credentials: 'include' })
     const data = await res.json()
     allWorkshops.value = data.data || []
   } catch {
@@ -237,7 +237,7 @@ async function loadAllWorkshops() {
 
 async function deleteWorkshop(id, name) {
   if (!confirm(`确认删除工坊「${name}」？其下所有模组将失去所属工坊关联。`)) return
-  await fetch(`/admin/workshops/${id}`, { method: 'DELETE', credentials: 'include' })
+  await fetch(`/api/admin/workshops/${id}`, { method: 'DELETE', credentials: 'include' })
   await loadAllWorkshops()
 }
 
@@ -249,7 +249,7 @@ async function loadUserDetail(userId) {
   userDetailLoading.value = true
   userDetail.value = { loading: true }  // 先打开弹窗显示加载态
   try {
-    const res = await fetch(`/admin/users/${userId}/detail`, { credentials: 'include' })
+    const res = await fetch(`/api/admin/users/${userId}/detail`, { credentials: 'include' })
     const data = await res.json()
     if (res.ok) {
       userDetail.value = data.data
