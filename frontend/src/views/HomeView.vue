@@ -299,22 +299,43 @@
         </p>
       </div>
     </div>
+
+    <!-- 登录提示 toast -->
+    <Transition
+      enter-active-class="transition duration-300 ease-out"
+      enter-from-class="opacity-0 -translate-y-3"
+      enter-to-class="opacity-100 translate-y-0"
+      leave-active-class="transition duration-200 ease-in"
+      leave-from-class="opacity-100"
+      leave-to-class="opacity-0"
+    >
+      <div
+        v-if="showLoginToast"
+        class="fixed top-20 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-xl text-sm font-bold shadow-lg"
+        style="background:#FFF7ED; color:#EA580C; border:2px solid #FDBA74; box-shadow:3px 3px 0 #FDBA74;"
+      >
+        请先登录后再游览工坊内容
+      </div>
+    </Transition>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { RouterLink, useRouter } from 'vue-router'
+import { RouterLink, useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useWorkshopStore } from '@/stores/workshop'
 
 const authStore = useAuthStore()
 const workshopStore = useWorkshopStore()
 const router = useRouter()
+const route = useRoute()
 // 控制工坊选择弹窗显示
 const showWorkshopModal = ref(false)
 // 弹窗内搜索输入
 const modalSearch = ref('')
+
+const showLoginToast = ref(false)
 
 onMounted(() => {
   workshopStore.fetchWorkshops()

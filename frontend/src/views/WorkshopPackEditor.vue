@@ -23,7 +23,6 @@ const loadingPack = ref(false)
 const form = ref({
   title: '',
   description: '',
-  worldbook: '',        // 模组对应的目标世界书名称
   workshop_id: null,   // 关联的工坊 ID（数字）
   tags: [],
 })
@@ -73,7 +72,6 @@ onMounted(async () => {
     }
     form.value.title = pack.title
     form.value.description = pack.description
-    form.value.worldbook = pack.worldbook || ''
     form.value.workshop_id = pack.workshop?.id || null
     form.value.tags = Array.isArray(pack.tags) ? [...pack.tags] : []
     sourceWorkshopSlug.value = pack.workshop?.slug || null
@@ -111,7 +109,6 @@ async function handleSubmit() {
   const payload = {
     title: form.value.title.trim(),
     description: form.value.description.trim(),
-    worldbook: form.value.worldbook.trim(),
     workshop_id: form.value.workshop_id || null,
     tags: form.value.tags,
   }
@@ -215,20 +212,6 @@ function goBack() {
               :value="w.id"
             >{{ w.name }}</option>
           </select>
-        </div>
-
-        <div class="flex flex-col gap-1">
-          <label class="text-sm font-semibold" style="color:#78716C;">
-            目标世界书名称
-            <span class="font-normal text-xs ml-1" style="color:#A8A29E;">（SillyTavern 中订阅时写入的世界书）</span>
-          </label>
-          <input
-            v-model="form.worldbook"
-            type="text"
-            class="input"
-            placeholder="例如：蒸汽朋克世界书"
-            maxlength="200"
-          />
         </div>
       </div>
 

@@ -144,38 +144,157 @@ async function handleWorkshopMessage(event) {
   // 安全检查：必须来自我们的 iframe
   if (!workshopWindow || event.source !== workshopWindow) return;
 
-  const { type, payload } = event.data || {};
-  if (!type) return;
+  const data = event.data || {};
+  const rawType = data.type;
+  const payload = data.payload;
+  
+  if (!rawType) return;
+  const type = String(rawType).trim();
 
-  console.log('[ST创意工坊] 收到消息:', type, payload);
+  console.log(`[ST创意工坊] 收到消息: "${type}" (长度: ${type.length})`, payload);
 
-  switch (type) {
-    case 'workshop_ping':
-      // 工坊已就绪，回应 pong 完成握手
-      console.log('[ST创意工坊] 握手完成，发送 pong');
-      // 停止重复发送 opener
-      if (handshakeInterval) {
-        clearInterval(handshakeInterval);
-        handshakeInterval = null;
-      }
-      workshopWindow.postMessage({ type: 'workshop_pong', connected: true }, '*');
-      toastr.success('工坊已连接', 'ST创意工坊');
-      break;
-    case 'workshop_open_oauth':
-      // 工坊请求打开 OAuth 弹窗（iframe 内无法打开弹窗）
-      await handleOpenOAuth(payload);
-      break;
-    case 'workshop_scan':
-      await handleScan(payload);
-      break;
-    case 'workshop_subscribe':
-      await handleSubscribe(payload);
-      break;
-    case 'workshop_unsubscribe':
-      await handleUnsubscribe(payload);
-      break;
-    default:
-      console.warn('[ST创意工坊] 未知消息类型:', type);
+  if (type === 'workshop_ping') {
+    console.log('[ST创意工坊] 握手完成，发送 pong');
+    if (handshakeInterval) {
+      clearInterval(handshakeInterval);
+      handshakeInterval = null;
+    }
+    workshopWindow.postMessage({ type: 'workshop_pong', connected: true }, '*');
+    toastr.success('工坊已连接', 'ST创意工坊');
+  } 
+  else if (type === 'workshop_open_oauth') {
+    await handleOpenOAuth(payload);
+  } 
+  else if (type === 'workshop_scan') {
+    await handleScan(payload);
+  } 
+  else if (type === 'workshop_subscribe') {
+    await handleSubscribe(payload);
+  } 
+  else if (type === 'workshop_unsubscribe') {
+    await handleUnsubscribe(payload);
+  } 
+  else if (type === 'workshop_get_current_worldbooks') {
+    await handleGetCurrentWorldbooks(payload);
+  } 
+  else if (type === 'workshop_get_worldbook_list') {
+    await handleGetWorldbookList();
+  } 
+  else if (type === 'workshop_get_worldbook_entries') {
+    await handleGetWorldbookEntries(payload);
+  } 
+  else {
+    console.warn(`[ST创意工坊] 未知消息类型: "${type}" (长度: ${type.length})`);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 获取所有世界书名称列表
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function handleGetWorldbookList() {
+  try {
+    const TH = window.TavernHelper;
+    if (!TH) throw new Error('酒馆助手 TavernHelper 不可用');
+
+    const allNames = await TH.getWorldbookNames();
+    sendResult('workshop_get_worldbook_list_result', {
+      success: true,
+      worldbooks: allNames,
+    });
+  } catch (err) {
+    console.error('[ST创意工坊] 获取世界书列表失败:', err);
+    sendResult('workshop_get_worldbook_list_result', { success: false, message: err.message });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 获取当前角色绑定的世界书（主世界书和附加世界书）
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function handleGetCurrentWorldbooks(payload) {
+  try {
+    const TH = window.TavernHelper;
+    if (!TH) throw new Error('酒馆助手 TavernHelper 不可用');
+
+    // 获取当前角色绑定的世界书
+    // TavernHelper 可能有 getCurrentCharacterWorldbooks() 或类似 API
+    // 如果没有，则返回空结果
+    let primary = null;
+    let additional = [];
+
+    // 尝试获取当前角色的世界书绑定信息
+    // 注意：这里需要根据实际的 TavernHelper API 调整
+    if (typeof TH.getCurrentCharacterWorldbooks === 'function') {
+      const result = TH.getCurrentCharacterWorldbooks();
+      primary = result.primary || null;
+      additional = result.additional || [];
+    }
+
+    console.log('[ST创意工坊] 当前角色世界书:', { primary, additional });
+    
+    sendResult('workshop_get_current_worldbooks_result', {
+      success: true,
+      primary,
+      additional,
+    });
+  } catch (err) {
+    console.error('[ST创意工坊] 获取当前角色世界书失败:', err);
+    sendResult('workshop_get_current_worldbooks_result', {
+      success: false,
+      message: err.message,
+    });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 获取特定世界书的条目（从用户拥有的所有世界书中匹配）
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function handleGetWorldbookEntries(payload) {
+  const { worldbookName } = payload;
+  if (!worldbookName) {
+    sendResult('workshop_get_worldbook_entries_result', { success: false, message: '缺少世界书名称' });
+    return;
+  }
+
+  try {
+    const TH = window.TavernHelper;
+    if (!TH) throw new Error('酒馆助手 TavernHelper 不可用');
+
+    // 1. 获取用户拥有的所有世界书名称（不限于当前角色绑定的）
+    const allNames = await TH.getWorldbookNames();
+    console.log('[ST创意工坊] 当前酒馆所有世界书:', allNames);
+    
+    // 2. 在全量列表中进行匹配
+    if (!allNames.includes(worldbookName)) {
+      console.log(`[ST创意工坊] 酒馆中不存在世界书: 「${worldbookName}」`);
+      sendResult('workshop_get_worldbook_entries_result', {
+        success: true,
+        worldbookName,
+        entries: [],
+        exists: false,
+      });
+      return;
+    }
+
+    // 3. 如果存在，获取其具体条目
+    const entries = await TH.getWorldbook(worldbookName);
+    console.log(`[ST创意工坊] 成功映射世界书「${worldbookName}」，条目数: ${entries.length}`);
+    
+    sendResult('workshop_get_worldbook_entries_result', {
+      success: true,
+      worldbookName,
+      entries,
+      exists: true,
+    });
+  } catch (err) {
+    console.error(`[ST创意工坊] 映射世界书「${worldbookName}」失败:`, err);
+    sendResult('workshop_get_worldbook_entries_result', {
+      success: false,
+      worldbookName,
+      message: err.message,
+    });
   }
 }
 

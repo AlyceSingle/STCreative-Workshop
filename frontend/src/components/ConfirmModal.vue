@@ -63,7 +63,6 @@ const emit = defineEmits(['confirm', 'cancel'])
               border: 2.5px solid #FDBA74;
               border-radius: 20px;
               box-shadow: 6px 6px 0 #FDBA74;
-              transform: rotate(-0.6deg);
             "
           >
             <!-- 标题行（铅笔小图标 + 文字） -->
@@ -81,11 +80,13 @@ const emit = defineEmits(['confirm', 'cancel'])
             </div>
 
             <!-- 正文 -->
-            <p
+            <div
               class="text-sm leading-relaxed"
               style="font-family: 'Nunito', sans-serif; color: #78716C;"
-              v-html="message"
-            />
+            >
+              <div v-if="message" v-html="message" />
+              <slot v-else />
+            </div>
 
             <!-- 按钮行 -->
             <div class="flex items-center justify-end gap-3 pt-1">

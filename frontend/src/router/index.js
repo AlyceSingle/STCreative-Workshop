@@ -14,6 +14,7 @@ const routes = [
     path: '/workshop',
     name: 'workshop',
     component: () => import('@/views/WorkshopView.vue'),
+    meta: { requiresAuth: true },
   },
   {
     path: '/workshop/new',
@@ -38,6 +39,7 @@ const routes = [
     path: '/workshop/:packId',
     name: 'workshop-pack-detail',
     component: () => import('@/views/WorkshopPackDetail.vue'),
+    meta: { requiresAuth: true },
   },
   {
     path: '/workshop/:packId/edit',
@@ -74,6 +76,7 @@ const routes = [
     path: '/story/:id',
     name: 'story-detail',
     component: () => import('@/views/StoryDetailView.vue'),
+    meta: { requiresAuth: true },
     props: true,
   },
   {
@@ -122,7 +125,9 @@ router.beforeEach(async (to) => {
       await authStore.fetchMe()
     }
     if (!authStore.isLoggedIn) {
-      return { name: 'workshop', query: { login: 'required' } }
+      // 在跳转前弹出提示，这样更及时
+      window.alert('请先登录后再游览工坊内容')
+      return { name: 'home' }
     }
   }
 })

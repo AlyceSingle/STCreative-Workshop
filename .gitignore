@@ -17,6 +17,7 @@ dist
 *.jpg
 *.zip
 
+stories.db
 stories.db-shm
 stories.db-wal
 

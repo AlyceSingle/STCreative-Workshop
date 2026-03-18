@@ -63,6 +63,61 @@ watch(searchInput, (val) => {
 // ── 排序 ──────────────────────────────────────────────────────────────
 const currentSort = ref('popular') // 'popular' | 'newest'
 
+// ── 动态映射 ──────────────────────────────────────────────────────────
+const activeWorldbookName = ref(null)
+const showMappingPanel = ref(false)
+const showMappingModal = ref(false)  // 控制大屏模态框
+const mappingSortKey = ref('order') // 'order' | 'depth' | 'uid' | 'name' | 'content'
+const mappingSortOrder = ref('asc') // 'asc' | 'desc'
+
+const selectedMappingEntry = ref(null)
+const showEntryDetailModal = ref(false)
+
+function openEntryDetail(entry) {
+  selectedMappingEntry.value = entry
+  showEntryDetailModal.value = true
+}
+
+const sortedMappingEntries = computed(() => {
+  const name = workshopStore.worldbookName
+  const entries = workshopStore.worldbookEntriesMap[name]
+  if (!entries || !entries.length) return []
+  
+  return [...entries].sort((a, b) => {
+    let res = 0
+    if (mappingSortKey.value === 'order') {
+      res = (a.position?.order ?? 0) - (b.position?.order ?? 0)
+    } else if (mappingSortKey.value === 'depth') {
+      res = (a.position?.depth ?? 0) - (b.position?.depth ?? 0)
+    } else if (mappingSortKey.value === 'uid') {
+      res = (a.uid ?? 0) - (b.uid ?? 0)
+    } else if (mappingSortKey.value === 'name') {
+      res = (a.name || '').localeCompare(b.name || '')
+    } else if (mappingSortKey.value === 'content') {
+      res = (a.content?.length ?? 0) - (b.content?.length ?? 0)
+    }
+    return mappingSortOrder.value === 'asc' ? res : -res
+  })
+})
+
+async function autoMapWorldbook() {
+  const name = workshopStore.worldbookName
+  if (!name || !workshopStore.stConnected) return
+  
+  await workshopStore.fetchWorldbookEntries(name)
+  if (workshopStore.worldbookEntriesMap[name]?.length > 0) {
+    activeWorldbookName.value = name
+    showMappingPanel.value = true
+  }
+}
+
+// 当连接到 ST 且进入了某个工坊（且世界书名变化）时，自动映射
+watch([() => workshopStore.stConnected, () => workshopStore.worldbookName], ([connected, name]) => {
+  if (connected && name && workshopSlug.value) {
+    autoMapWorldbook()
+  }
+}, { immediate: true })
+
 // ── Tag 多选过滤 ──────────────────────────────────────────────────────
 const activeTags = ref([])
 
@@ -317,6 +372,232 @@ const newModRoute = computed(() => ({
         </span>
       </div>
     </div>
+
+    <!-- 动态世界书条目映射 -->
+    <div v-if="workshopStore.stConnected && workshopSlug" class="mb-6">
+      <div
+        class="card p-3"
+        style="background: #FFFBF0; border: 2px solid #FDBA74; border-radius: 12px;"
+      >
+        <div class="flex items-center justify-between mb-0 flex-wrap gap-2">
+          <div class="flex items-center gap-2">
+            <h3 class="font-bold text-[13px]" style="font-family: 'Fredoka', sans-serif; color: #431407;">已连接世界书</h3>
+            <button
+              @click="autoMapWorldbook"
+              class="p-0.5 rounded-full transition-colors flex-shrink-0"
+              style="color:#F97316;"
+              title="重新刷新"
+            >
+              <svg
+                class="w-3 h-3"
+                :class="{ 'animate-spin': workshopStore.loading }"
+                viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"
+              >
+                <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+              </svg>
+            </button>
+          </div>
+          
+          <div class="flex items-center gap-3 ml-auto">
+            <div v-if="workshopStore.worldbookEntriesMap[workshopStore.worldbookName]?.length" class="flex items-center gap-1.5">
+              <span class="text-[11px] font-bold" style="color:#EA580C;">已同步 {{ workshopStore.worldbookEntriesMap[workshopStore.worldbookName].length }} 条</span>
+              <div class="h-3 w-[1.5px] bg-[#FDBA74]"></div>
+              <select v-model="mappingSortKey" class="text-[10px] font-bold p-0.5 rounded border border-[#FDBA74]" style="background:#FFFBF0; color:#78350F;">
+                <option value="order">顺序</option>
+                <option value="depth">深度</option>
+                <option value="uid">UID</option>
+                <option value="name">名称</option>
+                <option value="content">字符</option>
+              </select>
+              <button 
+                @click="mappingSortOrder = mappingSortOrder === 'asc' ? 'desc' : 'asc'"
+                class="text-[10px] font-bold px-1 rounded border border-[#FDBA74]"
+                style="background:#FFF7ED; color:#78350F;"
+              >
+                {{ mappingSortOrder === 'asc' ? '↑' : '↓' }}
+              </button>
+            </div>
+            <button 
+              @click="showMappingModal = true" 
+              class="text-xs font-bold"
+              style="color:#EA580C; min-width:34px;"
+            >
+              展开
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 大屏映射查看模态框 -->
+    <Teleport to="body">
+      <Transition
+        enter-active-class="transition duration-300 ease-out"
+        enter-from-class="opacity-0"
+        enter-to-class="opacity-100"
+        leave-active-class="transition duration-200 ease-in"
+        leave-from-class="opacity-100"
+        leave-to-class="opacity-0"
+      >
+        <div
+          v-if="showMappingModal"
+          class="fixed inset-0 z-[150] flex items-center justify-center p-4 sm:p-10"
+          style="background: rgba(67, 20, 7, 0.45);"
+          @click.self="showMappingModal = false"
+        >
+          <div
+            class="w-full max-w-5xl h-full max-h-[85vh] flex flex-col overflow-hidden"
+            style="background:#FFFBF0; border:3px solid #FDBA74; border-radius:24px; box-shadow:10px 10px 0 #FDBA74;"
+          >
+            <!-- 页头 -->
+            <div class="p-6 border-b-2 border-dashed border-[#FDBA74] flex items-center justify-between bg-white/50">
+              <div>
+                <h3 class="text-2xl font-bold" style="font-family:'Fredoka',sans-serif; color:#9A3412;">
+                  世界书: {{ workshopStore.worldbookName }}
+                </h3>
+                <p class="text-sm font-bold mt-1" style="color:#EA580C;">
+                  已同步 {{ workshopStore.worldbookEntriesMap[workshopStore.worldbookName]?.length || 0 }} 条条目
+                </p>
+              </div>
+              
+              <div class="flex items-center gap-4">
+                <!-- 排序控制 -->
+                <div class="flex items-center gap-2 px-4 py-2 rounded-2xl bg-[#FFF7ED] border border-[#FDBA74]">
+                  <span class="text-xs font-bold text-[#A8A29E]">排序方式</span>
+                  <select v-model="mappingSortKey" class="text-sm font-bold bg-transparent border-none focus:ring-0 text-[#78350F]">
+                    <option value="order">执行顺序</option>
+                    <option value="depth">插入深度</option>
+                    <option value="uid">原始 UID</option>
+                    <option value="name">条目名称</option>
+                    <option value="content">字符长度</option>
+                  </select>
+                  <button 
+                    @click="mappingSortOrder = mappingSortOrder === 'asc' ? 'desc' : 'asc'"
+                    class="w-8 h-8 flex items-center justify-center rounded-full bg-white border border-[#FDBA74] text-[#78350F] transition-transform"
+                    :class="{ 'rotate-180': mappingSortOrder === 'desc' }"
+                  >
+                    ↑
+                  </button>
+                </div>
+
+                <button
+                  @click="showMappingModal = false"
+                  class="w-12 h-12 rounded-full flex items-center justify-center transition-colors shadow-sm"
+                  style="color:#EA580C; border:2.5px solid #FDBA74; background:#FFF7ED;"
+                >
+                  <svg class="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <!-- 列表内容 (大屏网格) -->
+            <div class="flex-1 overflow-y-auto p-8 custom-scrollbar">
+              <div 
+                class="w-full"
+                style="column-width: 220px; column-gap: 12px;"
+              >
+                <button
+                  v-for="entry in sortedMappingEntries"
+                  :key="entry.uid"
+                  @click="openEntryDetail(entry)"
+                  class="flex items-center w-full px-4 py-3 mb-3 rounded-xl border-2 font-bold transition-all duration-150 hover:scale-[1.02] active:scale-[0.98] text-left shadow-sm"
+                  style="break-inside: avoid;"
+                  :style="entry.enabled 
+                    ? 'background: white; border-color: #FDBA74; color: #431407;' 
+                    : 'background: #F5F5F4; border-color: #E7E5E4; color: #A8A29E;'"
+                >
+                  <div class="flex flex-col flex-1 truncate">
+                    <div class="flex items-center gap-2 mb-1">
+                      <span class="text-[10px] px-1.5 py-0.5 rounded-md bg-[#FFF7ED] text-[#EA580C] border border-[#FDBA74]">
+                        {{ String(entry.position?.order ?? 0).padStart(3, '0') }}
+                      </span>
+                      <span class="truncate text-sm">{{ entry.name || '(未命名)' }}</span>
+                    </div>
+                    <div class="text-[10px] opacity-50 font-normal truncate">
+                      {{ entry.content }}
+                    </div>
+                  </div>
+                  
+                  <div class="flex-shrink-0 ml-3">
+                    <span v-if="entry.strategy?.type === 'constant'" class="w-3 h-3 rounded-full bg-blue-500 block shadow-[0_0_6px_rgba(59,130,246,0.5)]"></span>
+                    <span v-else-if="entry.strategy?.type === 'selective'" class="w-3 h-3 rounded-full bg-green-500 block shadow-[0_0_6px_rgba(34,197,94,0.5)]"></span>
+                    <span v-else class="text-sm">🔗</span>
+                  </div>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <!-- 详情模态框 (Teleport) -->
+    <Teleport to="body">
+      <Transition
+        enter-active-class="transition duration-200 ease-out"
+        enter-from-class="opacity-0 scale-95"
+        enter-to-class="opacity-100 scale-100"
+        leave-active-class="transition duration-150 ease-in"
+        leave-from-class="opacity-100 scale-100"
+        leave-to-class="opacity-0 scale-95"
+      >
+        <div
+          v-if="showEntryDetailModal"
+          class="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-8"
+          style="background: rgba(0,0,0,0.5);"
+          @click.self="showEntryDetailModal = false"
+        >
+          <div
+            class="w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden"
+            style="background:#FFFBF0; border:3px solid #FDBA74; border-radius:24px; box-shadow:8px 8px 0 #FDBA74;"
+          >
+            <!-- 模态框页头 -->
+            <div class="p-5 border-b-2 border-dashed border-[#FDBA74] flex items-center justify-between">
+              <div>
+                <h3 class="text-xl font-bold" style="font-family:'Fredoka',sans-serif; color:#9A3412;">
+                  {{ selectedMappingEntry?.name || '未命名条目' }}
+                </h3>
+                <div class="flex gap-3 mt-1 text-xs font-bold" style="color:#A8A29E;">
+                  <span>UID: {{ selectedMappingEntry?.uid }}</span>
+                  <span>Order: {{ selectedMappingEntry?.position?.order }}</span>
+                  <span>Depth: {{ selectedMappingEntry?.position?.depth }}</span>
+                </div>
+              </div>
+              <button
+                @click="showEntryDetailModal = false"
+                class="w-10 h-10 rounded-full flex items-center justify-center transition-colors cursor-pointer"
+                style="color:#EA580C; border:2px solid #FDBA74; background:#FFF7ED;"
+              >
+                <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+              </button>
+            </div>
+
+            <!-- 模态框内容 -->
+            <div class="flex-1 overflow-y-auto p-6 custom-scrollbar">
+              <div class="mb-6 p-4 rounded-2xl bg-white border-2 border-[#FDBA74] whitespace-pre-wrap text-sm leading-relaxed" style="color:#431407; font-family:'Nunito',sans-serif;">
+                {{ selectedMappingEntry?.content }}
+              </div>
+              
+              <!-- 更多元数据 -->
+              <div class="grid grid-cols-2 gap-4">
+                <div class="p-3 rounded-xl bg-[#FFF7ED] border border-[#FDBA74]">
+                  <span class="block text-[10px] text-[#A8A29E] uppercase font-bold">策略类型</span>
+                  <span class="text-xs font-bold text-[#78350F]">{{ selectedMappingEntry?.strategy?.type }}</span>
+                </div>
+                <div class="p-3 rounded-xl bg-[#FFF7ED] border border-[#FDBA74]">
+                  <span class="block text-[10px] text-[#A8A29E] uppercase font-bold">关键词</span>
+                  <span class="text-xs font-bold text-[#78350F]">{{ selectedMappingEntry?.strategy?.keys?.join(', ') || '(无)' }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
 
     <!-- 搜索栏 + tag 过滤 -->
     <div class="flex flex-col gap-3 mb-6">

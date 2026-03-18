@@ -128,6 +128,10 @@ export const useWorkshopStore = defineStore('workshop', () => {
   // ── 动态世界书名称 ────────────────────────────────────────────
   // 默认读取 steampunk 分区的 localStorage 值（或默认值）
   const worldbookName = ref(getWorldbookName('steampunk'))
+  const worldbookList = ref([])
+  const currentCharWorldbooks = ref({ primary: null, additional: [] })
+  const worldbookEntriesMap = ref({})
+  const dynamicWorldbooksLoading = ref(false)
 
   function setWorldbookName(slug, name) {
     worldbookName.value = name
@@ -374,7 +378,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
 
   // ── 订阅（服务端计数 + 可选 ST 操作）───────────────────────────
 
-  async function toggleSubscribe(pack) {
+  async function toggleSubscribe(pack, selectedEntryIds = null) {
     error.value = null
     try {
       const res = await authFetch(`/api/workshop/packs/${pack.id}/subscribe`, {
@@ -400,7 +404,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
       // ST 扩展模式（stConnected 已是可靠标志，不再依赖 window.opener）
       if (stConnected.value) {
         if (json.subscribed) {
-          await _subscribeViaST(pack)
+          await _subscribeViaST(pack, selectedEntryIds)
         } else {
           await _unsubscribeViaST(pack.id)
         }
@@ -410,7 +414,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
       // 直接嵌入 ST 模式
       if (isSillyTavernEnv()) {
         if (json.subscribed) {
-          await insertPackToWorldbook(pack)
+          await insertPackToWorldbook(pack, selectedEntryIds)
         } else {
           await removePackFromWorldbook(pack.id)
         }
@@ -508,7 +512,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
     _listenerAdded = true
 
     window.addEventListener('message', (event) => {
-      const { type, success, message, packIds, entryCountMap, removedCount, source } = event.data || {}
+      const { type, success, message, packIds, entryCountMap, removedCount, source, primary, additional } = event.data || {}
       if (!type) return
 
       console.log('[Workshop] 收到消息:', event.data, 'from:', event.origin)
@@ -537,6 +541,41 @@ export const useWorkshopStore = defineStore('workshop', () => {
       // 握手响应
       if (type === 'workshop_pong') {
         stConnected.value = true
+        return
+      }
+
+      // 获取全量世界书列表结果
+      if (type === 'workshop_get_worldbook_list_result') {
+        const resolve = _pending['get_worldbook_list']?.resolve
+        if (resolve) {
+          clearTimeout(_pending['get_worldbook_list']?.timer)
+          delete _pending['get_worldbook_list']
+          resolve({ success, worldbooks: event.data.worldbooks, message })
+        }
+        return
+      }
+
+      // 获取当前角色世界书结果
+      if (type === 'workshop_get_current_worldbooks_result') {
+        const resolve = _pending['get_current_worldbooks']?.resolve
+        if (resolve) {
+          clearTimeout(_pending['get_current_worldbooks']?.timer)
+          delete _pending['get_current_worldbooks']
+          resolve({ success, primary, additional, message })
+        }
+        return
+      }
+
+      // 获取特定世界书条目结果
+      if (type === 'workshop_get_worldbook_entries_result') {
+        const name = event.data.worldbookName
+        const key = `get_entries_${name}`
+        const resolve = _pending[key]?.resolve
+        if (resolve) {
+          clearTimeout(_pending[key]?.timer)
+          delete _pending[key]
+          resolve({ success, worldbookName: name, entries: event.data.entries, message })
+        }
         return
       }
 
@@ -656,7 +695,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
   }
 
   // 通过 ST 扩展订阅（postMessage）
-  async function _subscribeViaST(pack) {
+  async function _subscribeViaST(pack, selectedEntryIds = null) {
     try {
       // 获取完整条目（如果当前 pack 没有 entries）
       let entries = pack.entries
@@ -665,6 +704,12 @@ export const useWorkshopStore = defineStore('workshop', () => {
         if (!res.ok) throw new Error('获取 Pack 详情失败')
         const json = await res.json()
         entries = json.data.entries || []
+      }
+
+      // 若指定了 selectedEntryIds，仅插入被选中的条目
+      if (selectedEntryIds !== null) {
+        const idSet = new Set(selectedEntryIds.map(Number))
+        entries = entries.filter(e => idSet.has(Number(e.id)))
       }
 
       // 转换为 TavernHelper WorldbookEntry 格式（不含 uid）
@@ -717,6 +762,49 @@ export const useWorkshopStore = defineStore('workshop', () => {
 
   // ── SillyTavern 世界书操作 ───────────────────────────────────
 
+  // ── 动态映射操作 ──────────────────────────────────────────────
+
+  async function fetchCurrentWorldbooks() {
+    if (!stConnected.value) return
+    dynamicWorldbooksLoading.value = true
+    try {
+      const res = await _sendToOpener('workshop_get_current_worldbooks', {}, 'get_current_worldbooks')
+      if (res && res.success) {
+        currentCharWorldbooks.value = { primary: res.primary, additional: res.additional }
+      }
+    } catch (err) {
+      console.error('[Workshop] 获取当前角色世界书失败:', err)
+    } finally {
+      dynamicWorldbooksLoading.value = false
+    }
+  }
+
+  async function fetchWorldbookEntries(name) {
+    if (!stConnected.value || !name) return
+    try {
+      const res = await _sendToOpener('workshop_get_worldbook_entries', { worldbookName: name }, `get_entries_${name}`)
+      if (res && res.success) {
+        worldbookEntriesMap.value = { ...worldbookEntriesMap.value, [name]: res.entries }
+      }
+    } catch (err) {
+      console.error(`[Workshop] 获取世界书「${name}」条目失败:`, err)
+    }
+  }
+
+  async function fetchWorldbookList() {
+    if (!stConnected.value) return []
+    try {
+      const res = await _sendToOpener('workshop_get_worldbook_list', {}, 'get_worldbook_list')
+      if (res && res.success) {
+        worldbookList.value = res.worldbooks || []
+        return worldbookList.value
+      }
+    } catch (err) {
+      console.error('[Workshop] 获取世界书列表失败:', err)
+    }
+    return []
+  }
+
   // 扫描世界书，构建已订阅 pack 的映射 { packId: true }
   async function scanSubscribedPacks() {
     // ST 扩展模式（stConnected 已是可靠标志，不再依赖 window.opener）
@@ -755,8 +843,8 @@ export const useWorkshopStore = defineStore('workshop', () => {
     }
   }
 
-  // 将整个 pack 的所有条目插入到 ST 世界书（TavernHelper API）
-  async function insertPackToWorldbook(pack) {
+  // 将整个 pack 的所有（或选中的）条目插入到 ST 世界书（TavernHelper API）
+  async function insertPackToWorldbook(pack, selectedEntryIds = null) {
     if (!isSillyTavernEnv()) return false
     stLoading.value = true
     try {
@@ -770,6 +858,12 @@ export const useWorkshopStore = defineStore('workshop', () => {
         if (!res.ok) throw new Error('获取 Pack 详情失败')
         const json = await res.json()
         entries = json.data.entries || []
+      }
+
+      // 若指定了 selectedEntryIds，仅插入被选中的条目
+      if (selectedEntryIds !== null) {
+        const idSet = new Set(selectedEntryIds.map(Number))
+        entries = entries.filter(e => idSet.has(Number(e.id)))
       }
 
       // 确保世界书存在
@@ -841,6 +935,10 @@ export const useWorkshopStore = defineStore('workshop', () => {
     subscribedPacksInST,
     stLoading,
     worldbookName,
+    worldbookList,
+    currentCharWorldbooks,
+    worldbookEntriesMap,
+    dynamicWorldbooksLoading,
     workshops,
     workshopsLoading,
     mySubscriptions,
@@ -867,6 +965,9 @@ export const useWorkshopStore = defineStore('workshop', () => {
     setWorldbookName,
     loadWorldbookForSection,
     initStExtensionMode,
+    fetchWorldbookList,
+    fetchCurrentWorldbooks,
+    fetchWorldbookEntries,
     // 工坊管理
     createWorkshop,
     updateWorkshop,

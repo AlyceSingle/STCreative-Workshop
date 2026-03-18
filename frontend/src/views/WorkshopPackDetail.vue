@@ -54,31 +54,39 @@ async function handleLike() {
 
 // 订阅确认弹窗状态
 const showSubConfirm = ref(false)
+const targetWorldbookName = ref('')
+// 条目选择（所有条目 ID 的列表，默认全部选中）
+const selectedEntryIds = ref([])
 
-// 订阅确认正文：ST 已连接时显示世界书名称
-const subConfirmMessage = computed(() => {
-  const title = `<strong>${pack.value?.title || ''}</strong>`
-  if (workshopStore.isFromStExtension() && workshopStore.stConnected) {
-    const wb = `<strong>${workshopStore.worldbookName}</strong>`
-    return `确定要订阅 ${title} 吗？<br><span style="color:#16A34A;">条目将插入世界书「${wb}」</span>`
-  }
-  return `确定要订阅 ${title} 吗？`
-})
-
-function handleSubscribe() {
+async function handleSubscribe() {
   if (!authStore.isLoggedIn) { authStore.loginWithDiscord(); return }
   // 取消订阅：无需确认，直接执行
   if (pack.value?.is_subscribed) {
     workshopStore.toggleSubscribe(pack.value)
     return
   }
-  // 订阅：弹出确认框
+  // 订阅：弹出确认框，初始化目标世界书名称
+  // 如果是 ST 扩展模式，先获取世界书列表
+  if (workshopStore.isFromStExtension() && workshopStore.stConnected) {
+    await workshopStore.fetchWorldbookList()
+  }
+  targetWorldbookName.value = workshopStore.worldbookName
+  
+  // 初始化条目选择列表（默认全选）
+  selectedEntryIds.value = (pack.value?.entries || []).map(e => e.id)
+  
   showSubConfirm.value = true
 }
 
 async function confirmSubscribe() {
   showSubConfirm.value = false
-  await workshopStore.toggleSubscribe(pack.value)
+  // 如果用户修改了世界书名称，更新 store 中的状态
+  if (targetWorldbookName.value.trim()) {
+    const slug = pack.value?.workshop?.slug || pack.value?.section || 'default'
+    workshopStore.setWorldbookName(slug, targetWorldbookName.value.trim())
+  }
+  // 传入选中的条目 ID 列表
+  await workshopStore.toggleSubscribe(pack.value, selectedEntryIds.value)
 }
 
 async function handleDeletePack() {
@@ -361,10 +369,74 @@ watch(() => workshopStore.stNotification, (notif) => {
   <ConfirmModal
     v-if="showSubConfirm"
     title="订阅模组"
-    :message="subConfirmMessage"
     confirm-text="确认订阅"
     cancel-text="取消"
     @confirm="confirmSubscribe"
     @cancel="showSubConfirm = false"
-  />
+  >
+    <div class="flex flex-col gap-4">
+      <p v-html="`确定要订阅 <strong>${pack?.title}</strong> 吗？`"></p>
+      
+      <div v-if="workshopStore.isFromStExtension() && workshopStore.stConnected" class="flex flex-col gap-1.5 p-3 rounded-xl bg-[#F0FDF4] border border-[#DCFCE7]">
+        <label class="text-[10px] font-bold text-[#16A34A] uppercase tracking-wider">选择目标世界书</label>
+        <select 
+          v-model="targetWorldbookName"
+          class="input text-sm py-1.5"
+          style="border-color:#22C55E; background: white;"
+        >
+          <option v-if="workshopStore.worldbookName" :value="workshopStore.worldbookName">
+            {{ workshopStore.worldbookName }} (工坊作者默认)
+          </option>
+          <option 
+            v-for="wb in workshopStore.worldbookList.filter(w => w !== workshopStore.worldbookName)" 
+            :key="wb" 
+            :value="wb"
+          >
+            {{ wb }}
+          </option>
+        </select>
+        <p class="text-[10px] text-[#16A34A] opacity-80 mt-1">
+          * 条目将插入到所选世界书中。默认为工坊作者推荐的世界书。
+        </p>
+      </div>
+
+      <!-- 条目选择列表 -->
+      <div v-if="pack?.entries && pack.entries.length > 0" class="flex flex-col gap-2 p-3 rounded-xl bg-[#FFFBF0] border border-[#FDBA74]">
+        <div class="flex items-center justify-between">
+          <label class="text-[10px] font-bold text-[#78350F] uppercase tracking-wider">选择要插入的条目</label>
+          <button 
+            @click.stop="selectedEntryIds = selectedEntryIds.length === pack.entries.length ? [] : pack.entries.map(e => e.id)"
+            class="text-[10px] font-bold px-2 py-0.5 rounded"
+            style="background:#FFF7ED; color:#EA580C; border:1px solid #FDBA74;"
+          >
+            {{ selectedEntryIds.length === pack.entries.length ? '取消全选' : '全选' }}
+          </button>
+        </div>
+        <div class="max-h-[200px] overflow-y-auto custom-scrollbar flex flex-col gap-1">
+          <label 
+            v-for="entry in pack.entries" 
+            :key="entry.id"
+            class="flex items-start gap-2 p-2 rounded-lg hover:bg-[#FFF7ED] transition-colors cursor-pointer"
+            style="border:1px solid transparent;"
+            :style="selectedEntryIds.includes(entry.id) ? 'background:#FFF7ED; border-color:#FDBA74;' : ''"
+          >
+            <input 
+              type="checkbox"
+              :value="entry.id"
+              v-model="selectedEntryIds"
+              class="mt-0.5 flex-shrink-0"
+              style="accent-color:#F97316;"
+            />
+            <div class="flex-1 min-w-0">
+              <div class="text-xs font-bold truncate" style="color:#431407;">{{ entry.name }}</div>
+              <div v-if="entry.content" class="text-[10px] line-clamp-1 mt-0.5" style="color:#78716C;">{{ entry.content }}</div>
+            </div>
+          </label>
+        </div>
+        <p class="text-[10px] text-[#78350F] opacity-80">
+          已选择 {{ selectedEntryIds.length }} / {{ pack.entries.length }} 条
+        </p>
+      </div>
+    </div>
+  </ConfirmModal>
 </template>
