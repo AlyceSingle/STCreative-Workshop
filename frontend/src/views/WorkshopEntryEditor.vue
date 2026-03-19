@@ -11,7 +11,12 @@ const authStore = useAuthStore()
 
 const packId = computed(() => parseInt(route.params.packId))
 const isEdit = computed(() => !!route.params.entryId)
-const pageTitle = computed(() => isEdit.value ? '编辑条目' : '添加条目')
+
+const pageTitle = computed(() => {
+  const typeLabel = form.entry_type === 'worldbook' ? '世界书条目' : 
+                    (form.entry_type === 'regex' ? '酒馆正则' : '开场白')
+  return isEdit.value ? `编辑${typeLabel}` : `添加${typeLabel}`
+})
 
 const saving = ref(false)
 const loadingEntry = ref(false)
@@ -21,8 +26,23 @@ const fileInput = ref(null)
 // 表单数据
 const form = reactive({
   name: '',
+  entry_type: 'worldbook',
   enabled: true,
   content: '',
+  
+  // regex 专属
+  regex_find: '',
+  regex_source_user: true,
+  regex_source_ai: true,
+  regex_source_slash: true,
+  regex_source_world: false,
+  regex_dest_display: true,
+  regex_dest_prompt: false,
+  regex_min_depth: '',
+  regex_max_depth: '',
+  regex_run_on_edit: false,
+
+  // worldbook 专属
   strategy_type: 'selective',
   keys: '',              // 逗号分隔字符串，提交时转为数组
   keys_secondary_logic: 'and_any',
@@ -50,108 +70,7 @@ function joinKeys(arr) {
   return Array.isArray(arr) ? arr.join(', ') : ''
 }
 
-// 导出 JSON
-function handleExport() {
-  const entry = {
-    name: form.name,
-    enabled: form.enabled,
-    strategy: {
-      type: form.strategy_type,
-      keys: splitKeys(form.keys),
-      keys_secondary: {
-        logic: form.keys_secondary_logic,
-        keys: splitKeys(form.keys_secondary)
-      },
-      scan_depth: form.scan_depth === 'same_as_global' ? 'same_as_global' : (parseInt(form.scan_depth) || 0)
-    },
-    position: {
-      type: form.position_type,
-      role: form.position_role,
-      depth: parseInt(form.position_depth) || 0,
-      order: parseInt(form.position_order) || 100
-    },
-    content: form.content,
-    probability: parseInt(form.probability) ?? 100,
-    recursion: {
-      prevent_incoming: !!form.recursion_prevent_incoming,
-      prevent_outgoing: !!form.recursion_prevent_outgoing,
-      delay_until: form.recursion_delay_until === '' ? null : (parseInt(form.recursion_delay_until) || 0)
-    },
-    effect: {
-      sticky: form.effect_sticky === '' ? null : (parseInt(form.effect_sticky) || 0),
-      cooldown: form.effect_cooldown === '' ? null : (parseInt(form.effect_cooldown) || 0),
-      delay: form.effect_delay === '' ? null : (parseInt(form.effect_delay) || 0)
-    }
-  }
-
-  const blob = new Blob([JSON.stringify(entry, null, 2)], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `${form.name || 'entry'}.json`
-  a.click()
-  URL.revokeObjectURL(url)
-}
-
-// 导入 JSON
-function triggerImport() {
-  fileInput.value?.click()
-}
-
-function handleImport(event) {
-  const file = event.target.files[0]
-  if (!file) return
-
-  const reader = new FileReader()
-  reader.onload = (e) => {
-    try {
-      const entry = JSON.parse(e.target.result)
-      
-      // 映射数据到表单
-      if (entry.name !== undefined) form.name = entry.name
-      if (entry.enabled !== undefined) form.enabled = !!entry.enabled
-      if (entry.content !== undefined) form.content = entry.content
-      
-      if (entry.strategy) {
-        if (entry.strategy.type) form.strategy_type = entry.strategy.type
-        if (entry.strategy.keys) form.keys = joinKeys(entry.strategy.keys)
-        if (entry.strategy.keys_secondary) {
-          if (entry.strategy.keys_secondary.logic) form.keys_secondary_logic = entry.strategy.keys_secondary.logic
-          if (entry.strategy.keys_secondary.keys) form.keys_secondary = joinKeys(entry.strategy.keys_secondary.keys)
-        }
-        if (entry.strategy.scan_depth !== undefined) form.scan_depth = String(entry.strategy.scan_depth)
-      }
-      
-      if (entry.position) {
-        if (entry.position.type) form.position_type = entry.position.type
-        if (entry.position.role) form.position_role = entry.position.role
-        if (entry.position.depth !== undefined) form.position_depth = entry.position.depth
-        if (entry.position.order !== undefined) form.position_order = entry.position.order
-      }
-      
-      if (entry.probability !== undefined) form.probability = entry.probability
-      
-      if (entry.recursion) {
-        if (entry.recursion.prevent_incoming !== undefined) form.recursion_prevent_incoming = !!entry.recursion.prevent_incoming
-        if (entry.recursion.prevent_outgoing !== undefined) form.recursion_prevent_outgoing = !!entry.recursion.prevent_outgoing
-        if (entry.recursion.delay_until !== undefined) form.recursion_delay_until = entry.recursion.delay_until ?? ''
-      }
-      
-      if (entry.effect) {
-        if (entry.effect.sticky !== undefined) form.effect_sticky = entry.effect.sticky ?? ''
-        if (entry.effect.cooldown !== undefined) form.effect_cooldown = entry.effect.cooldown ?? ''
-        if (entry.effect.delay !== undefined) form.effect_delay = entry.effect.delay ?? ''
-      }
-
-      workshopStore.error = null
-    } catch (err) {
-      console.error('导入失败:', err)
-      workshopStore.error = '导入失败：无效的 JSON 文件'
-    }
-  }
-  reader.readAsText(file)
-  event.target.value = '' // 清除 input 以便下次触发
-}
+// 取消了单条目的导入和导出功能
 
 onMounted(async () => {
   // 等待认证状态加载完毕
@@ -161,6 +80,11 @@ onMounted(async () => {
         if (!authStore.loading) { stop(); resolve() }
       })
     })
+  }
+
+  // Set entry_type from query if not editing
+  if (!isEdit.value && route.query.type) {
+    form.entry_type = route.query.type
   }
 
   // 未登录则跳转回工坊
@@ -191,8 +115,27 @@ onMounted(async () => {
     }
 
     form.name = entry.name
+    form.entry_type = entry.entry_type || 'worldbook'
     form.enabled = entry.enabled
     form.content = entry.content
+    
+    if (form.entry_type === 'regex' && entry.extra_data) {
+      form.regex_find = entry.extra_data.find_regex || ''
+      if (entry.extra_data.source) {
+        form.regex_source_user = !!entry.extra_data.source.user_input
+        form.regex_source_ai = !!entry.extra_data.source.ai_output
+        form.regex_source_slash = !!entry.extra_data.source.slash_command
+        form.regex_source_world = !!entry.extra_data.source.world_info
+      }
+      if (entry.extra_data.destination) {
+        form.regex_dest_display = !!entry.extra_data.destination.display
+        form.regex_dest_prompt = !!entry.extra_data.destination.prompt
+      }
+      form.regex_min_depth = entry.extra_data.min_depth ?? ''
+      form.regex_max_depth = entry.extra_data.max_depth ?? ''
+      form.regex_run_on_edit = !!entry.extra_data.run_on_edit
+    }
+    
     form.strategy_type = entry.strategy_type
     form.keys = joinKeys(entry.keys)
     form.keys_secondary_logic = entry.keys_secondary_logic
@@ -220,8 +163,30 @@ async function handleSubmit() {
   saving.value = true
   workshopStore.error = null
 
+  let extra_data = {}
+  if (form.entry_type === 'regex') {
+    extra_data = {
+      find_regex: form.regex_find,
+      source: {
+        user_input: form.regex_source_user,
+        ai_output: form.regex_source_ai,
+        slash_command: form.regex_source_slash,
+        world_info: form.regex_source_world,
+      },
+      destination: {
+        display: form.regex_dest_display,
+        prompt: form.regex_dest_prompt,
+      },
+      min_depth: form.regex_min_depth === '' ? null : parseInt(form.regex_min_depth),
+      max_depth: form.regex_max_depth === '' ? null : parseInt(form.regex_max_depth),
+      run_on_edit: form.regex_run_on_edit,
+    }
+  }
+
   const payload = {
     name: form.name.trim(),
+    entry_type: form.entry_type,
+    extra_data,
     enabled: form.enabled,
     content: form.content,
     strategy_type: form.strategy_type,
@@ -269,15 +234,6 @@ function goBack() {
           {{ pageTitle }}
         </h1>
       </div>
-      <div class="flex gap-2">
-        <input type="file" ref="fileInput" class="hidden" accept=".json" @change="handleImport" />
-        <button type="button" class="btn-secondary text-sm py-1.5 px-3" @click="triggerImport">
-          📥 导入 JSON
-        </button>
-        <button type="button" class="btn-secondary text-sm py-1.5 px-3" @click="handleExport">
-          📤 导出 JSON
-        </button>
-      </div>
     </div>
 
     <!-- 加载中 -->
@@ -314,15 +270,85 @@ function goBack() {
 
         <!-- 内容 -->
         <div class="flex flex-col gap-1">
-          <label class="text-sm font-semibold" style="color:#78716C;">条目内容</label>
+          <label class="text-sm font-semibold" style="color:#78716C;">
+            {{ form.entry_type === 'worldbook' ? '世界书内容' : (form.entry_type === 'regex' ? '替换后文本 (Replace String)' : '开场白内容') }}
+          </label>
           <textarea
             v-model="form.content"
             class="input resize-y"
             style="min-height:180px; font-family:'Nunito',monospace; font-size:0.875rem;"
-            placeholder="在这里输入世界书条目的内容…"
+            :placeholder="form.entry_type === 'worldbook' ? '在这里输入世界书条目的内容…' : (form.entry_type === 'regex' ? '正则替换为…（内容为空表示删除）' : '在这里输入额外的开场白内容…')"
           ></textarea>
         </div>
       </section>
+
+      <!-- ── 酒馆正则 专属设置 ─────────────────────────────── -->
+      <section v-if="form.entry_type === 'regex'" class="flex flex-col gap-4 p-5" style="border:2px solid #FED7AA; border-radius:16px; background:white;">
+        <h2 class="font-bold text-base" style="font-family:'Fredoka',sans-serif; color:#92400E;">正则设置</h2>
+
+        <!-- Find Regex -->
+        <div class="flex flex-col gap-1">
+          <label class="text-sm font-semibold" style="color:#78716C;">匹配正则 (Find Regex) *</label>
+          <input v-model="form.regex_find" type="text" class="input" placeholder="输入正则表达式" style="font-family:'Nunito',monospace;" required />
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <!-- 匹配来源 -->
+          <div class="flex flex-col gap-2">
+            <label class="text-sm font-semibold" style="color:#78716C;">匹配来源 (Source)</label>
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <input v-model="form.regex_source_user" type="checkbox" class="w-4 h-4 accent-orange-500" />
+              <span class="text-sm text-gray-700">用户输入</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <input v-model="form.regex_source_ai" type="checkbox" class="w-4 h-4 accent-orange-500" />
+              <span class="text-sm text-gray-700">AI 输出</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <input v-model="form.regex_source_slash" type="checkbox" class="w-4 h-4 accent-orange-500" />
+              <span class="text-sm text-gray-700">Slash 命令</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <input v-model="form.regex_source_world" type="checkbox" class="w-4 h-4 accent-orange-500" />
+              <span class="text-sm text-gray-700">世界书</span>
+            </label>
+          </div>
+
+          <!-- 替换目的地 -->
+          <div class="flex flex-col gap-2">
+            <label class="text-sm font-semibold" style="color:#78716C;">替换对象 (Destination)</label>
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <input v-model="form.regex_dest_display" type="checkbox" class="w-4 h-4 accent-orange-500" />
+              <span class="text-sm text-gray-700">仅格式显示</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <input v-model="form.regex_dest_prompt" type="checkbox" class="w-4 h-4 accent-orange-500" />
+              <span class="text-sm text-gray-700">仅提示词 (Prompt)</span>
+            </label>
+
+            <label class="text-sm font-semibold mt-2" style="color:#78716C;">其他选项</label>
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <input v-model="form.regex_run_on_edit" type="checkbox" class="w-4 h-4 accent-orange-500" />
+              <span class="text-sm text-gray-700">编辑时运行</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <div class="flex flex-col gap-1">
+            <label class="text-sm font-semibold" style="color:#78716C;">最小深度 (可选)</label>
+            <input v-model="form.regex_min_depth" type="number" class="input" min="0" placeholder="空表示无限制" />
+          </div>
+          <div class="flex flex-col gap-1">
+            <label class="text-sm font-semibold" style="color:#78716C;">最大深度 (可选)</label>
+            <input v-model="form.regex_max_depth" type="number" class="input" min="0" placeholder="空表示无限制" />
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 世界书专属 ─────────────────────────────── -->
+      <!-- Wrapper for Worldbook sections -->
+      <template v-if="form.entry_type === 'worldbook'">
 
       <!-- ── 触发策略 ─────────────────────────────── -->
       <section class="flex flex-col gap-4 p-5" style="border:2px solid #FED7AA; border-radius:16px; background:white;">
@@ -520,6 +546,7 @@ function goBack() {
           </div>
         </div>
       </section>
+      </template>
 
       <!-- 提交按钮 -->
       <div class="flex gap-3 justify-end">

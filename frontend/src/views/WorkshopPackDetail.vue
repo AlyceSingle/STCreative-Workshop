@@ -16,6 +16,10 @@ const isOwner = computed(() => authStore.user && pack.value && authStore.user.id
 const isAdmin = computed(() => authStore.user && authStore.user.role === 'admin')
 const canAddEntry = computed(() => isOwner.value || isAdmin.value)
 
+const worldbookEntries = computed(() => pack.value?.entries?.filter(e => e.entry_type === 'worldbook' || !e.entry_type) || [])
+const regexEntries = computed(() => pack.value?.entries?.filter(e => e.entry_type === 'regex') || [])
+const greetingEntries = computed(() => pack.value?.entries?.filter(e => e.entry_type === 'greeting') || [])
+
 // 批量导入文件输入
 const batchFileInput = ref(null)
 
@@ -463,120 +467,113 @@ watch(() => workshopStore.stNotification, (notif) => {
         </div>
       </div>
 
-      <!-- 条目列表 -->
-      <div class="flex items-center justify-between mb-3">
+      <!-- ── 世界书列表 ─────────────────────────────── -->
+      <div class="flex items-center justify-between mb-3 mt-4">
         <h2 class="font-bold text-lg" style="font-family:'Fredoka',sans-serif; color:#EA580C;">
-          条目列表
+          世界书条目 ({{ worldbookEntries.length }})
         </h2>
         <div class="flex items-center gap-2">
           <template v-if="canAddEntry">
             <input type="file" ref="batchFileInput" class="hidden" accept=".json" multiple @change="handleBatchImport" />
             <button type="button" class="btn-secondary text-sm py-1.5 px-3" @click="triggerBatchImport">
-            导入 JSON
+              导入 JSON
             </button>
           </template>
           <button type="button" class="btn-secondary text-sm py-1.5 px-3" @click="handleOpenExport">
             导出 JSON
           </button>
-          <RouterLink
-            v-if="canAddEntry"
-            :to="{ name: 'workshop-entry-new', params: { packId: pack.id } }"
-            class="btn-primary text-sm"
-          >
+          <RouterLink v-if="canAddEntry" :to="{ name: 'workshop-entry-new', params: { packId: pack.id }, query: { type: 'worldbook' } }" class="btn-primary text-sm">
             添加条目
           </RouterLink>
         </div>
       </div>
-
-      <!-- 无条目 -->
-      <div
-        v-if="!pack.entries || !pack.entries.length"
-        class="flex flex-col items-center justify-center py-12 gap-3"
-        style="border:2px dashed #FED7AA; border-radius:16px;"
-      >
-        <p class="text-sm font-semibold" style="color:#C0B8B0; font-family:'Fredoka',sans-serif;">
-          此模组还没有条目
-        </p>
-        <RouterLink
-          v-if="canAddEntry"
-          :to="{ name: 'workshop-entry-new', params: { packId: pack.id } }"
-          class="btn-primary text-sm"
-        >
-          添加第一条
-        </RouterLink>
+      <div v-if="worldbookEntries.length === 0" class="flex flex-col items-center justify-center py-8 gap-3" style="border:2px dashed #FED7AA; border-radius:16px;">
+        <p class="text-sm font-semibold" style="color:#C0B8B0; font-family:'Fredoka',sans-serif;">此模组还没有世界书条目</p>
       </div>
-
-      <!-- 条目卡片 -->
       <div v-else class="flex flex-col gap-3">
-        <div
-          v-for="entry in pack.entries"
-          :key="entry.id"
-          class="p-4 flex flex-col gap-2"
-          style="background:white; border:2px solid #FED7AA; border-radius:14px;"
-        >
+        <div v-for="entry in worldbookEntries" :key="entry.id" class="p-4 flex flex-col gap-2" style="background:white; border:2px solid #FED7AA; border-radius:14px;">
           <div class="flex items-start justify-between gap-2">
             <div class="flex items-center gap-2 flex-wrap">
-              <!-- 启用状态 -->
-              <span
-                class="text-xs font-bold px-2 py-0.5 rounded-full"
-                :style="entry.enabled
-                  ? 'background:#DCFCE7; color:#16A34A; border:1.5px solid #22C55E;'
-                  : 'background:#F3F4F6; color:#9CA3AF; border:1.5px solid #D1D5DB;'"
-              >
-                {{ entry.enabled ? '启用' : '禁用' }}
-              </span>
-              <!-- 策略类型 -->
-              <span class="text-xs font-bold px-2 py-0.5 rounded-full" style="background:#FFF7ED; color:#EA580C; border:1.5px solid #FDBA74;">
-                {{ strategyLabel(entry.strategy_type) }}
-              </span>
+              <span class="text-xs font-bold px-2 py-0.5 rounded-full" :style="entry.enabled ? 'background:#DCFCE7; color:#16A34A; border:1.5px solid #22C55E;' : 'background:#F3F4F6; color:#9CA3AF; border:1.5px solid #D1D5DB;'">{{ entry.enabled ? '启用' : '禁用' }}</span>
+              <span class="text-xs font-bold px-2 py-0.5 rounded-full" style="background:#FFF7ED; color:#EA580C; border:1.5px solid #FDBA74;">{{ strategyLabel(entry.strategy_type) }}</span>
             </div>
-
-            <!-- 编辑/删除（条目作者或 pack 作者） -->
             <div v-if="canEditEntry(entry)" class="flex items-center gap-2 flex-shrink-0">
-              <RouterLink
-                :to="{ name: 'workshop-entry-edit', params: { packId: pack.id, entryId: entry.id } }"
-                class="text-xs font-bold px-3 py-1 rounded-full transition-colors"
-                style="color:#EA580C; border:1.5px solid #FDBA74; background:#FFFBF0;"
-              >
-                编辑
-              </RouterLink>
-              <button
-                class="text-xs font-bold px-3 py-1 rounded-full transition-colors"
-                style="color:#EF4444; border:1.5px solid #FECACA; background:#FEF2F2;"
-                @click="handleDeleteEntry(entry.id)"
-              >
-                删除
-              </button>
+              <RouterLink :to="{ name: 'workshop-entry-edit', params: { packId: pack.id, entryId: entry.id } }" class="text-xs font-bold px-3 py-1 rounded-full transition-colors" style="color:#EA580C; border:1.5px solid #FDBA74; background:#FFFBF0;">编辑</RouterLink>
+              <button class="text-xs font-bold px-3 py-1 rounded-full transition-colors" style="color:#EF4444; border:1.5px solid #FECACA; background:#FEF2F2;" @click="handleDeleteEntry(entry.id)">删除</button>
             </div>
           </div>
-
-          <!-- 名称 -->
-          <h3 class="font-bold text-sm" style="font-family:'Fredoka',sans-serif; color:#431407;">
-            {{ entry.name }}
-          </h3>
-
-          <!-- 触发词 -->
+          <h3 class="font-bold text-sm" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ entry.name }}</h3>
           <div v-if="entry.keys && entry.keys.length" class="flex flex-wrap gap-1.5">
-            <span
-              v-for="key in entry.keys"
-              :key="key"
-              class="tag-badge"
-            >
-              {{ key }}
-            </span>
+            <span v-for="key in entry.keys" :key="key" class="tag-badge">{{ key }}</span>
           </div>
-
-          <!-- 内容预览 -->
-          <p
-            v-if="entry.content"
-            class="text-xs line-clamp-3"
-            style="color:#78716C; font-family:'Nunito',sans-serif; background:#FFFBF0; border-radius:8px; padding:8px; border:1px solid #FED7AA;"
-          >
-            {{ entry.content }}
-          </p>
+          <p v-if="entry.content" class="text-xs line-clamp-3" style="color:#78716C; font-family:'Nunito',sans-serif; background:#FFFBF0; border-radius:8px; padding:8px; border:1px solid #FED7AA;">{{ entry.content }}</p>
         </div>
       </div>
 
+      <!-- ── 酒馆正则列表 ─────────────────────────────── -->
+      <div class="flex items-center justify-between mb-3 mt-8">
+        <h2 class="font-bold text-lg" style="font-family:'Fredoka',sans-serif; color:#EA580C;">
+          酒馆正则 ({{ regexEntries.length }})
+        </h2>
+        <div class="flex items-center gap-2">
+          <RouterLink v-if="canAddEntry" :to="{ name: 'workshop-entry-new', params: { packId: pack.id }, query: { type: 'regex' } }" class="btn-primary text-sm">
+            添加正则
+          </RouterLink>
+        </div>
+      </div>
+      <div v-if="regexEntries.length === 0" class="flex flex-col items-center justify-center py-8 gap-3" style="border:2px dashed #FED7AA; border-radius:16px;">
+        <p class="text-sm font-semibold" style="color:#C0B8B0; font-family:'Fredoka',sans-serif;">暂无正则配置</p>
+      </div>
+      <div v-else class="flex flex-col gap-3">
+        <div v-for="entry in regexEntries" :key="entry.id" class="p-4 flex flex-col gap-2" style="background:white; border:2px solid #FED7AA; border-radius:14px;">
+          <div class="flex items-start justify-between gap-2">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="text-xs font-bold px-2 py-0.5 rounded-full" :style="entry.enabled ? 'background:#DCFCE7; color:#16A34A; border:1.5px solid #22C55E;' : 'background:#F3F4F6; color:#9CA3AF; border:1.5px solid #D1D5DB;'">{{ entry.enabled ? '启用' : '禁用' }}</span>
+              <span class="text-xs font-bold px-2 py-0.5 rounded-full" style="background:#FFF7ED; color:#EA580C; border:1.5px solid #FDBA74;">酒馆正则</span>
+            </div>
+            <div v-if="canEditEntry(entry)" class="flex items-center gap-2 flex-shrink-0">
+              <RouterLink :to="{ name: 'workshop-entry-edit', params: { packId: pack.id, entryId: entry.id } }" class="text-xs font-bold px-3 py-1 rounded-full transition-colors" style="color:#EA580C; border:1.5px solid #FDBA74; background:#FFFBF0;">编辑</RouterLink>
+              <button class="text-xs font-bold px-3 py-1 rounded-full transition-colors" style="color:#EF4444; border:1.5px solid #FECACA; background:#FEF2F2;" @click="handleDeleteEntry(entry.id)">删除</button>
+            </div>
+          </div>
+          <h3 class="font-bold text-sm" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ entry.name }}</h3>
+          <div v-if="entry.extra_data && entry.extra_data.find_regex" class="text-xs p-2 rounded-lg" style="background:#1E293B; color:#38BDF8; font-family:monospace; word-break:break-all;">
+            {{ entry.extra_data.find_regex }}
+          </div>
+          <p v-if="entry.content" class="text-xs line-clamp-3" style="color:#78716C; font-family:'Nunito',sans-serif; background:#FFFBF0; border-radius:8px; padding:8px; border:1px solid #FED7AA;">{{ entry.content }}</p>
+        </div>
+      </div>
+
+      <!-- ── 开场白列表 ─────────────────────────────── -->
+      <div class="flex items-center justify-between mb-3 mt-8">
+        <h2 class="font-bold text-lg" style="font-family:'Fredoka',sans-serif; color:#EA580C;">
+          开场白 ({{ greetingEntries.length }})
+        </h2>
+        <div class="flex items-center gap-2">
+          <RouterLink v-if="canAddEntry" :to="{ name: 'workshop-entry-new', params: { packId: pack.id }, query: { type: 'greeting' } }" class="btn-primary text-sm">
+            添加开场白
+          </RouterLink>
+        </div>
+      </div>
+      <div v-if="greetingEntries.length === 0" class="flex flex-col items-center justify-center py-8 gap-3" style="border:2px dashed #FED7AA; border-radius:16px;">
+        <p class="text-sm font-semibold" style="color:#C0B8B0; font-family:'Fredoka',sans-serif;">暂无开场白配置</p>
+      </div>
+      <div v-else class="flex flex-col gap-3">
+        <div v-for="entry in greetingEntries" :key="entry.id" class="p-4 flex flex-col gap-2" style="background:white; border:2px solid #FED7AA; border-radius:14px;">
+          <div class="flex items-start justify-between gap-2">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="text-xs font-bold px-2 py-0.5 rounded-full" :style="entry.enabled ? 'background:#DCFCE7; color:#16A34A; border:1.5px solid #22C55E;' : 'background:#F3F4F6; color:#9CA3AF; border:1.5px solid #D1D5DB;'">{{ entry.enabled ? '启用' : '禁用' }}</span>
+              <span class="text-xs font-bold px-2 py-0.5 rounded-full" style="background:#FFF7ED; color:#EA580C; border:1.5px solid #FDBA74;">开场白</span>
+            </div>
+            <div v-if="canEditEntry(entry)" class="flex items-center gap-2 flex-shrink-0">
+              <RouterLink :to="{ name: 'workshop-entry-edit', params: { packId: pack.id, entryId: entry.id } }" class="text-xs font-bold px-3 py-1 rounded-full transition-colors" style="color:#EA580C; border:1.5px solid #FDBA74; background:#FFFBF0;">编辑</RouterLink>
+              <button class="text-xs font-bold px-3 py-1 rounded-full transition-colors" style="color:#EF4444; border:1.5px solid #FECACA; background:#FEF2F2;" @click="handleDeleteEntry(entry.id)">删除</button>
+            </div>
+          </div>
+          <h3 class="font-bold text-sm" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ entry.name }}</h3>
+          <p v-if="entry.content" class="text-xs" style="color:#78716C; font-family:'Nunito',sans-serif; background:#FFFBF0; border-radius:8px; padding:8px; border:1px solid #FED7AA; white-space:pre-wrap;">{{ entry.content }}</p>
+        </div>
+      </div>
     </template>
   </div>
 

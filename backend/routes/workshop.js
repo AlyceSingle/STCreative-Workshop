@@ -58,6 +58,8 @@ function formatEntry(row) {
     pack_id: row.pack_id,
     author_id: row.author_id,    // 条目作者（用于前端判断编辑权限）
     name: row.name,
+    entry_type: row.entry_type || 'worldbook',
+    extra_data: JSON.parse(row.extra_data || '{}'),
     enabled: !!row.enabled,
     content: row.content,
     strategy_type: row.strategy_type,
@@ -565,7 +567,7 @@ router.post('/packs/:packId/entries', requireAuth, (req, res) => {
   }
 
   const {
-    name, enabled, content, strategy_type,
+    name, entry_type, extra_data, enabled, content, strategy_type,
     keys, keys_secondary_logic, keys_secondary,
     scan_depth, position_type, position_order, position_depth, position_role,
     probability,
@@ -586,16 +588,18 @@ router.post('/packs/:packId/entries', requireAuth, (req, res) => {
   try {
     const info = db.prepare(`
       INSERT INTO workshop_entries (
-        pack_id, author_id, name, enabled, content, strategy_type,
+        pack_id, author_id, name, entry_type, extra_data, enabled, content, strategy_type,
         keys, keys_secondary_logic, keys_secondary,
         scan_depth, position_type, position_order, position_depth, position_role,
         probability,
         recursion_prevent_incoming, recursion_prevent_outgoing, recursion_delay_until,
         effect_sticky, effect_cooldown, effect_delay
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       packId, req.user.id,
       String(name).trim(),
+      entry_type || 'worldbook',
+      JSON.stringify(extra_data || {}),
       enabled !== false ? 1 : 0,
       String(content || ''),
       strategy_type || 'selective',
@@ -647,13 +651,13 @@ router.post('/packs/:packId/entries/batch', requireAuth, (req, res) => {
   try {
     const insert = db.prepare(`
       INSERT INTO workshop_entries (
-        pack_id, author_id, name, enabled, content, strategy_type,
+        pack_id, author_id, name, entry_type, extra_data, enabled, content, strategy_type,
         keys, keys_secondary_logic, keys_secondary,
         scan_depth, position_type, position_order, position_depth, position_role,
         probability,
         recursion_prevent_incoming, recursion_prevent_outgoing, recursion_delay_until,
         effect_sticky, effect_cooldown, effect_delay
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const batchInsert = db.transaction((data) => {
@@ -662,6 +666,8 @@ router.post('/packs/:packId/entries/batch', requireAuth, (req, res) => {
         insert.run(
           packId, req.user.id,
           String(entry.name).trim().substring(0, 200),
+          entry.entry_type || 'worldbook',
+          JSON.stringify(entry.extra_data || {}),
           entry.enabled !== false ? 1 : 0,
           String(entry.content || ''),
           entry.strategy_type || 'selective',
@@ -726,7 +732,7 @@ router.put('/entries/:entryId', requireAuth, (req, res) => {
   }
 
   const {
-    name, enabled, content, strategy_type,
+    name, entry_type, extra_data, enabled, content, strategy_type,
     keys, keys_secondary_logic, keys_secondary,
     scan_depth, position_type, position_order, position_depth, position_role,
     probability,
@@ -742,7 +748,7 @@ router.put('/entries/:entryId', requireAuth, (req, res) => {
   try {
     db.prepare(`
       UPDATE workshop_entries SET
-        name = ?, enabled = ?, content = ?, strategy_type = ?,
+        name = ?, entry_type = ?, extra_data = ?, enabled = ?, content = ?, strategy_type = ?,
         keys = ?, keys_secondary_logic = ?, keys_secondary = ?,
         scan_depth = ?, position_type = ?, position_order = ?, position_depth = ?, position_role = ?,
         probability = ?,
@@ -751,6 +757,8 @@ router.put('/entries/:entryId', requireAuth, (req, res) => {
       WHERE id = ?
     `).run(
       String(name).trim(),
+      entry_type || 'worldbook',
+      JSON.stringify(extra_data || {}),
       enabled !== false ? 1 : 0,
       String(content || ''),
       strategy_type || 'selective',

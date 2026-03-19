@@ -71,6 +71,8 @@ function initSchema() {
       pack_id INTEGER NOT NULL REFERENCES workshop_packs(id) ON DELETE CASCADE,
       author_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       name TEXT NOT NULL DEFAULT '',
+      entry_type TEXT NOT NULL DEFAULT 'worldbook',
+      extra_data TEXT NOT NULL DEFAULT '{}',
       enabled INTEGER NOT NULL DEFAULT 1,
       content TEXT NOT NULL DEFAULT '',
       strategy_type TEXT NOT NULL DEFAULT 'selective',
@@ -287,6 +289,20 @@ function initSchema() {
   // 迁移：给 users 添加 is_banned 列（黑名单）
   try {
     db.exec(`ALTER TABLE users ADD COLUMN is_banned INTEGER NOT NULL DEFAULT 0`);
+  } catch (_) {
+    // 列已存在，忽略
+  }
+
+  // 迁移：给 workshop_entries 添加 entry_type 列（条目类型：worldbook / regex / greeting）
+  try {
+    db.exec(`ALTER TABLE workshop_entries ADD COLUMN entry_type TEXT NOT NULL DEFAULT 'worldbook'`);
+  } catch (_) {
+    // 列已存在，忽略
+  }
+
+  // 迁移：给 workshop_entries 添加 extra_data 列（条目扩展数据 JSON）
+  try {
+    db.exec(`ALTER TABLE workshop_entries ADD COLUMN extra_data TEXT NOT NULL DEFAULT '{}'`);
   } catch (_) {
     // 列已存在，忽略
   }

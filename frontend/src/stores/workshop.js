@@ -52,9 +52,25 @@ export async function authFetch(url, options = {}) {
   })
 }
 
-// 将 workshop entry 转换为 TavernHelper WorldbookEntry 格式（不含 uid，由 TH 自动分配）
+// 将 workshop entry 转换为 TavernHelper WorldbookEntry 或自定义格式（不含 uid，由 TH 自动分配）
 function toStEntry(entry, packId) {
+  if (entry.entry_type === 'regex' || entry.entry_type === 'greeting') {
+    return {
+      type: entry.entry_type,
+      name: entry.name,
+      enabled: !!entry.enabled,
+      content: entry.content || '',
+      extra_data: entry.extra_data || {},
+      extra: {
+        workshop_entry_id: entry.id,
+        pack_id: packId,
+        source: 'storyshare_workshop',
+      }
+    }
+  }
+
   return {
+    type: 'worldbook',
     name: entry.name,
     enabled: !!entry.enabled,
     strategy: {
@@ -763,9 +779,23 @@ export const useWorkshopStore = defineStore('workshop', () => {
   // 通过 ST 扩展取消订阅（postMessage）
   async function _unsubscribeViaST(packId) {
     try {
+      let entries = []
+      const p = packs.value.find((pack) => pack.id === packId) || currentPack.value
+      if (p && p.id === packId && p.entries) {
+        entries = p.entries
+      } else {
+        const res = await authFetch(`/api/workshop/packs/${packId}`)
+        if (res.ok) {
+          const json = await res.json()
+          entries = json.data.entries || []
+        }
+      }
+      const stEntries = entries.map(entry => toStEntry(entry, packId))
+
       const result = await _sendToOpener('workshop_unsubscribe', {
         packId,
         worldbookName: worldbookName.value,
+        entries: stEntries,
       }, `unsubscribe_${++_requestCounter}`)
 
       if (result && result.success) {

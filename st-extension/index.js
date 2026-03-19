@@ -434,32 +434,99 @@ async function handleSubscribe(payload) {
     const TH = window.TavernHelper;
     if (!TH) throw new Error('TavernHelper 不可用');
 
-    // 确保世界书存在（不存在则创建）
-    const names = TH.getWorldbookNames();
-    if (!names.includes(worldbookName)) {
-      await TH.createWorldbook(worldbookName);
+    const worldbookEntries = [];
+    const regexEntries = [];
+    const greetingEntries = [];
+
+    for (const entry of entries) {
+      if (entry.type === 'regex') regexEntries.push(entry);
+      else if (entry.type === 'greeting') greetingEntries.push(entry);
+      else worldbookEntries.push(entry);
     }
 
-    // 移除此 pack 的旧条目（幂等）
-    await TH.deleteWorldbookEntries(
-      worldbookName,
-      entry => entry.extra && entry.extra.source === 'storyshare_workshop' && entry.extra.pack_id === packId,
-      { render: 'debounced' }
-    );
+    let insertedCount = 0;
 
-    // 插入新条目
-    await TH.createWorldbookEntries(worldbookName, entries, { render: 'immediate' });
+    // 1. Worldbook
+    if (worldbookEntries.length > 0 || entries.length === 0) {
+      // 确保世界书存在（不存在则创建）
+      const names = TH.getWorldbookNames();
+      if (!names.includes(worldbookName)) {
+        await TH.createWorldbook(worldbookName);
+      }
+
+      // 移除此 pack 的旧条目（幂等）
+      await TH.deleteWorldbookEntries(
+        worldbookName,
+        entry => entry.extra && entry.extra.source === 'storyshare_workshop' && entry.extra.pack_id === packId,
+        { render: 'debounced' }
+      );
+
+      // 插入新条目
+      if (worldbookEntries.length > 0) {
+        await TH.createWorldbookEntries(worldbookName, worldbookEntries, { render: 'immediate' });
+        insertedCount += worldbookEntries.length;
+      }
+    }
+
+    // 2. Regex
+    await TH.updateTavernRegexesWith(regexes => {
+      // 移除旧正则
+      const newRegexes = regexes.filter(r => !(r.id && String(r.id).startsWith(`st_workshop_${packId}_`)));
+      for (const entry of regexEntries) {
+        const ed = entry.extra_data || {};
+        newRegexes.push({
+          id: `st_workshop_${packId}_${entry.extra.workshop_entry_id}`,
+          script_name: entry.name || '',
+          enabled: !!entry.enabled,
+          run_on_edit: !!ed.run_on_edit,
+          scope: 'global',
+          find_regex: ed.find_regex || '',
+          replace_string: entry.content || '',
+          source: ed.source || { user_input: true, ai_output: true, slash_command: true, world_info: false },
+          destination: ed.destination || { display: true, prompt: false },
+          min_depth: ed.min_depth || null,
+          max_depth: ed.max_depth || null,
+        });
+        insertedCount++;
+      }
+      return newRegexes;
+    }, { scope: 'global' });
+
+    // 3. Greeting
+    if (greetingEntries.length > 0) {
+      const chId = window.this_chid;
+      if (chId !== undefined && window.characters && window.characters[chId]) {
+        const char = window.characters[chId];
+        if (!char.data) char.data = {};
+        if (!char.data.alternate_greetings) char.data.alternate_greetings = [];
+        
+        let addedGreetings = 0;
+        for (const entry of greetingEntries) {
+          if (entry.content && !char.data.alternate_greetings.includes(entry.content)) {
+             char.data.alternate_greetings.push(entry.content);
+             insertedCount++;
+             addedGreetings++;
+          }
+        }
+        
+        if (addedGreetings > 0 && typeof window.saveCharacterDebounced === 'function') {
+          window.saveCharacterDebounced();
+        }
+      } else {
+        toastr.warning('订阅包含开场白，但当前未选中任何角色，无法注入开场白。', 'ST创意工坊');
+      }
+    }
 
     const result = {
       success: true,
-      message: `已将「${packTitle}」的 ${entries.length} 条条目插入世界书「${worldbookName}」`,
+      message: `已为「${packTitle}」插入 ${insertedCount} 条记录`,
     };
     sendResult('workshop_subscribe_result', result);
     toastr.success(`已订阅「${packTitle}」`, 'ST创意工坊');
     return result;
   } catch (err) {
     console.error('[ST创意工坊] 订阅失败:', err);
-    const result = { success: false, message: '插入世界书失败：' + err.message };
+    const result = { success: false, message: '订阅插入失败：' + err.message };
     sendResult('workshop_subscribe_result', result);
     toastr.error('订阅失败', 'ST创意工坊');
     return result;
@@ -471,7 +538,7 @@ async function handleSubscribe(payload) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function handleUnsubscribe(payload) {
-  const { packId, worldbookName } = payload;
+  const { packId, worldbookName, entries } = payload;
   if (packId == null || !worldbookName) {
     const result = { success: false, message: '缺少必要参数', removedCount: 0 };
     sendResult('workshop_unsubscribe_result', result);
@@ -482,23 +549,51 @@ async function handleUnsubscribe(payload) {
     const TH = window.TavernHelper;
     if (!TH) throw new Error('TavernHelper 不可用');
 
+    let removedCount = 0;
+
+    // 1. Worldbook
     const names = TH.getWorldbookNames();
-    if (!names.includes(worldbookName)) {
-      const result = { success: true, message: '世界书不存在', removedCount: 0 };
-      sendResult('workshop_unsubscribe_result', result);
-      return result;
+    if (names.includes(worldbookName)) {
+      const { deleted_entries } = await TH.deleteWorldbookEntries(
+        worldbookName,
+        entry => entry.extra && entry.extra.source === 'storyshare_workshop' && entry.extra.pack_id === packId,
+        { render: 'immediate' }
+      );
+      removedCount += deleted_entries.length;
     }
 
-    const { deleted_entries } = await TH.deleteWorldbookEntries(
-      worldbookName,
-      entry => entry.extra && entry.extra.source === 'storyshare_workshop' && entry.extra.pack_id === packId,
-      { render: 'immediate' }
-    );
-    const removedCount = deleted_entries.length;
+    // 2. Regex
+    await TH.updateTavernRegexesWith(regexes => {
+      const beforeCount = regexes.length;
+      const newRegexes = regexes.filter(r => !(r.id && String(r.id).startsWith(`st_workshop_${packId}_`)));
+      removedCount += (beforeCount - newRegexes.length);
+      return newRegexes;
+    }, { scope: 'global' });
+
+    // 3. Greeting
+    if (entries && entries.length > 0) {
+      const greetingEntries = entries.filter(e => e.type === 'greeting');
+      if (greetingEntries.length > 0) {
+        const chId = window.this_chid;
+        if (chId !== undefined && window.characters && window.characters[chId]) {
+          const char = window.characters[chId];
+          if (char.data && char.data.alternate_greetings) {
+            const beforeLen = char.data.alternate_greetings.length;
+            const contentsToRemove = new Set(greetingEntries.map(e => e.content));
+            char.data.alternate_greetings = char.data.alternate_greetings.filter(g => !contentsToRemove.has(g));
+            removedCount += (beforeLen - char.data.alternate_greetings.length);
+            
+            if (beforeLen !== char.data.alternate_greetings.length && typeof window.saveCharacterDebounced === 'function') {
+              window.saveCharacterDebounced();
+            }
+          }
+        }
+      }
+    }
 
     const result = {
       success: true,
-      message: `已从世界书移除 ${removedCount} 条条目`,
+      message: `已取消订阅，清理了 ${removedCount} 条相关记录`,
       removedCount,
     };
     sendResult('workshop_unsubscribe_result', result);
@@ -508,7 +603,7 @@ async function handleUnsubscribe(payload) {
     console.error('[ST创意工坊] 取消订阅失败:', err);
     const result = {
       success: false,
-      message: '移除世界书条目失败：' + err.message,
+      message: '取消订阅清理失败：' + err.message,
       removedCount: 0,
     };
     sendResult('workshop_unsubscribe_result', result);
