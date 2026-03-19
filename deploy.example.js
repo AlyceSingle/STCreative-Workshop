@@ -63,14 +63,22 @@ function deployFrontend() {
   
   const sshConn = getSshConnection();
   const remotePath = `${PATHS.remoteNginxPath}/${PATHS.remoteFrontendName}`;
-  const backupPath = `${remotePath}.backup.${getTimestamp()}`;
+  const backupPath = `${remotePath}.backup`;
   
-  runCommand(`ssh ${sshConn} "if [ -d ${remotePath} ]; then mv ${remotePath} ${backupPath}; fi"`);
+  // 删除旧备份，创建新备份
+  console.log('[前端] 备份现有文件...');
+  runCommand(`ssh ${sshConn} "if [ -d ${backupPath} ]; then rm -rf ${backupPath}; fi"`);
+  runCommand(`ssh ${sshConn} "if [ -d ${remotePath} ]; then cp -r ${remotePath} ${backupPath}; fi"`);
+  
+  // 删除旧版本，部署新版本
+  console.log('[前端] 部署新版本...');
+  runCommand(`ssh ${sshConn} "rm -rf ${remotePath}"`);
   runCommand(`ssh ${sshConn} "mkdir -p ${PATHS.remoteNginxPath}"`);
   runCommand(`scp -r "${PATHS.frontendDist}" ${sshConn}:${remotePath}`);
   runCommand(`ssh ${sshConn} "chown -R www-data:www-data ${remotePath} && chmod -R 755 ${remotePath}"`);
   
   console.log('[前端] 部署完成');
+  console.log(`[前端] 备份位置: ${backupPath}`);
 }
 
 // 部署后端
