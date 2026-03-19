@@ -125,17 +125,6 @@ npm run preview
 | `NODE_ENV` | 环境模式（`development` 或 `production`）|
 | `HTTP_PROXY` | （可选）HTTP 代理地址，如 `http://127.0.0.1:10808` |
 
-## 开发说明
-
-### 代码风格
-
-- 后端使用 CommonJS 模块规范（`require` / `module.exports`）
-- 前端使用 ES Modules 模块规范（`import` / `export`）
-- 所有 Vue 组件使用 Composition API 和 `<script setup>` 语法
-- 所有 UI 文本和代码注释使用中文（zh-CN）
-- 数据库列名使用 snake_case（如 `author_id`、`created_at`）
-- JavaScript 变量和函数使用 camelCase
-
 ### 设计语言
 
 - 背景色：`#FFFBF0` (奶油色)
@@ -181,7 +170,6 @@ npm run preview
 - 本项目不是 monorepo，`backend/` 和 `frontend/` 有各自独立的 `package.json` 和 `node_modules/`
 - 项目中没有配置测试或代码检查工具
 - `https-proxy-agent` 必须保持在 v5 版本（v6+ 为 ESM only，不兼容 CommonJS）
-- 前端构建时 base path 设置为 `/StoryShare/`，所有静态资源路径相对于此子路径
 
 ## 许可证
 
