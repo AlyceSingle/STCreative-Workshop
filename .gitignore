@@ -21,6 +21,6 @@ stories.db
 stories.db-shm
 stories.db-wal
 
-
+deploy.js
 nginx.conf
 storyshare.service

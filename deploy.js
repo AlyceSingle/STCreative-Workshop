@@ -8,7 +8,7 @@ const __dirname = dirname(__filename);
 
 // 配置区域
 const SSH_CONFIG = {
-  host: 'single',
+  host: 'uuio',
   user: 'root',
   port: 22
 };
@@ -16,7 +16,8 @@ const SSH_CONFIG = {
 const PATHS = {
   frontendDist: join(__dirname, 'frontend', 'dist'),
   backendDir: join(__dirname, 'backend'),
-  remoteNginxPath: '/usr/share/nginx/html',
+  // remoteNginxPath: '/usr/share/nginx/html',
+  remoteNginxPath: '/usr/local/nginx/html',
   remoteFrontendName: 'STCreativeWorkshop',
   remoteBackendPath: '/root/st-project',
   remoteBackendName: 'backend'
@@ -27,8 +28,6 @@ const SERVICE_NAME = 'STCreativeWorkshop.service';
 // 工具函数
 function runCommand(command) {
   try {
-    console.log(command)
-
     execSync(command, { stdio: 'pipe', cwd: __dirname });
   } catch (error) {
     console.error(`[错误] 命令执行失败: ${error.message}`);
@@ -80,38 +79,55 @@ function deployBackend() {
   
   const sshConn = getSshConnection();
   const remotePath = `${PATHS.remoteBackendPath}/${PATHS.remoteBackendName}`;
-  const backupPath = `${remotePath}.backup.${getTimestamp()}`;
-  const tempBackupDir = `/tmp/stcw-backup-${getTimestamp()}`;
-  const localTarPath = join(__dirname, 'backend-deploy.tar.gz');
-  const remoteTarPath = `/tmp/backend-deploy-${getTimestamp()}.tar.gz`;
+  const backupPath = `${remotePath}.backup`;
+  const zipFileName = 'STCreative-Workshop-backend.zip';
+  const remoteZipPath = `/root/${zipFileName}`;
+  const tempExtractDir = `/tmp/stcw-extract-${getTimestamp()}`;
   
-  // 在本地打包，排除 node_modules 和 .env
-  console.log('[后端] 正在打包...');
-  runCommand(`cd "${PATHS.backendDir}" && tar -czf "${localTarPath}" --exclude=node_modules --exclude=.env .`);
+  // 1. 使用 git archive 创建后端代码包
+  console.log('[后端] 创建代码压缩包...');
+  runCommand(`git archive --format=zip -o ${zipFileName} main:backend`);
   
-  runCommand(`ssh ${sshConn} "systemctl stop ${SERVICE_NAME} || true"`);
+  // 2. 上传压缩包到服务器
+  console.log('[后端] 上传压缩包到服务器...');
+  runCommand(`scp ./${zipFileName} ${sshConn}:/root`);
+  
+  // 3. 在服务器上解压到临时目录
+  console.log('[后端] 解压文件...');
+  runCommand(`ssh ${sshConn} "mkdir -p ${tempExtractDir} && cd ${tempExtractDir} && unzip -q /root/${zipFileName}"`);
+  
+  // 4. 删除旧备份，创建新备份
+  console.log('[后端] 备份现有文件...');
+  runCommand(`ssh ${sshConn} "if [ -d ${backupPath} ]; then rm -rf ${backupPath}; fi"`);
   runCommand(`ssh ${sshConn} "if [ -d ${remotePath} ]; then cp -r ${remotePath} ${backupPath}; fi"`);
-  runCommand(`ssh ${sshConn} "mkdir -p ${tempBackupDir} && if [ -f ${remotePath}/.env ]; then cp ${remotePath}/.env ${tempBackupDir}/.env; fi && if [ -f ${remotePath}/db/stories.db ]; then cp ${remotePath}/db/stories.db ${tempBackupDir}/stories.db; fi"`);
-  runCommand(`ssh ${sshConn} "mkdir -p ${PATHS.remoteBackendPath}"`);
-  runCommand(`ssh ${sshConn} "if [ -d ${remotePath} ]; then rm -rf ${remotePath}; fi && mkdir -p ${remotePath}"`);
   
-  // 上传压缩包并解压
-  console.log('[后端] 正在上传...');
-  runCommand(`scp "${localTarPath}" ${sshConn}:${remoteTarPath}`);
-  runCommand(`ssh ${sshConn} "mkdir -p ${remotePath} && cd ${remotePath} && tar -xzf ${remoteTarPath} && rm ${remoteTarPath}"`);
+  // 5. 停止服务
+  console.log('[后端] 停止服务...');
+  runCommand(`ssh ${sshConn} "systemctl stop ${SERVICE_NAME} || true"`);
   
-  // 清理本地临时文件
-  runCommand(`del /f /q "${localTarPath}"`);
+  // 6. 替换后端文件夹里的部分文件（重名覆盖，新增添加）
+  console.log('[后端] 替换文件...');
+  runCommand(`ssh ${sshConn} "mkdir -p ${remotePath}"`);
+  runCommand(`ssh ${sshConn} "cp -rf ${tempExtractDir}/* ${remotePath}/"`);
   
-  runCommand(`ssh ${sshConn} "if [ -f ${tempBackupDir}/.env ]; then cp ${tempBackupDir}/.env ${remotePath}/.env; fi && if [ -f ${tempBackupDir}/stories.db ]; then mkdir -p ${remotePath}/db && cp ${tempBackupDir}/stories.db ${remotePath}/db/stories.db; fi && rm -rf ${tempBackupDir}"`);
-  runCommand(`ssh ${sshConn} "rm -f ${remotePath}/.env.example"`);
+  // 7. 移除依赖
+  console.log('[后端] 移除旧依赖...');
+  runCommand(`ssh ${sshConn} "cd ${remotePath} && rm -rf node_modules package-lock.json"`);
   
-  console.log('[后端] 安装依赖中...');
-  runCommand(`ssh ${sshConn} "bash -lc 'cd ${remotePath} && npm install --production'"`);
+  // 8. 安装依赖
+  console.log('[后端] 安装依赖...');
+  runCommand(`ssh ${sshConn} "source ~/.zshrc && cd ${remotePath} && npm i"`);
   
+  // 9. 启动服务
+  console.log('[后端] 启动服务...');
   runCommand(`ssh ${sshConn} "systemctl start ${SERVICE_NAME}"`);
   
+  // 清理临时文件（保留备份文件夹）
+  console.log('[后端] 清理临时文件...');
+  runCommand(`ssh ${sshConn} "rm -rf ${tempExtractDir} ${remoteZipPath}"`);
+  
   console.log('[后端] 部署完成');
+  console.log(`[后端] 备份位置: ${backupPath}`);
 }
 
 // 部署全部
