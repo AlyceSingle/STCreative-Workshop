@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { getDb } = require('../db/init');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, optionalAuth } = require('../middleware/auth');
 
 // ── 辅助函数 ────────────────────────────────────────────────────────
 
@@ -200,7 +200,7 @@ router.delete('/workshops/:id', requireAuth, (req, res) => {
 // ── Pack 路由 ────────────────────────────────────────────────────────
 
 // GET /api/workshop — 获取 pack 列表，按热度排序（like_count + sub_count）
-router.get('/', (req, res) => {
+router.get('/', optionalAuth, (req, res) => {
   const db = getDb();
   const page = Math.max(1, parseInt(req.query.page) || 1);
   const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
@@ -283,7 +283,7 @@ router.get('/', (req, res) => {
 });
 
 // GET /api/workshop/packs/:packId — 获取单个 pack 详情（含条目列表）
-router.get('/packs/:packId', (req, res) => {
+router.get('/packs/:packId', optionalAuth, (req, res) => {
   const db = getDb();
   const packId = parseInt(req.params.packId);
   if (isNaN(packId)) return res.status(400).json({ error: '无效的模组 ID' });
@@ -503,16 +503,34 @@ router.post('/packs/:packId/subscribe', requireAuth, (req, res) => {
   const pack = db.prepare(`SELECT id FROM workshop_packs WHERE id = ?`).get(packId);
   if (!pack) return res.status(404).json({ error: '模组不存在' });
 
+  const { action } = req.body || {};
+
   try {
     const toggleSub = db.transaction(() => {
       const existing = db.prepare(`SELECT 1 FROM workshop_subscriptions WHERE user_id = ? AND pack_id = ?`).get(req.user.id, packId);
+      
+      if (action === 'subscribe') {
+        if (!existing) {
+          db.prepare(`INSERT INTO workshop_subscriptions (user_id, pack_id) VALUES (?, ?)`).run(req.user.id, packId);
+          db.prepare(`UPDATE workshop_packs SET sub_count = sub_count + 1 WHERE id = ?`).run(packId);
+        }
+        return true;
+      }
+      
+      if (action === 'unsubscribe') {
+        if (existing) {
+          db.prepare(`DELETE FROM workshop_subscriptions WHERE user_id = ? AND pack_id = ?`).run(req.user.id, packId);
+          db.prepare(`UPDATE workshop_packs SET sub_count = MAX(0, sub_count - 1) WHERE id = ?`).run(packId);
+        }
+        return false;
+      }
+
+      // Default toggle behavior
       if (existing) {
-        // 取消订阅
         db.prepare(`DELETE FROM workshop_subscriptions WHERE user_id = ? AND pack_id = ?`).run(req.user.id, packId);
         db.prepare(`UPDATE workshop_packs SET sub_count = MAX(0, sub_count - 1) WHERE id = ?`).run(packId);
         return false;
       } else {
-        // 订阅
         db.prepare(`INSERT INTO workshop_subscriptions (user_id, pack_id) VALUES (?, ?)`).run(req.user.id, packId);
         db.prepare(`UPDATE workshop_packs SET sub_count = sub_count + 1 WHERE id = ?`).run(packId);
         return true;

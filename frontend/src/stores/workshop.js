@@ -48,6 +48,7 @@ export async function authFetch(url, options = {}) {
   return fetch(url, {
     ...options,
     credentials: 'include',
+    cache: 'no-cache', // Prevents ST Extension iframe caching issues
   })
 }
 
@@ -378,11 +379,14 @@ export const useWorkshopStore = defineStore('workshop', () => {
 
   // ── 订阅（服务端计数 + 可选 ST 操作）───────────────────────────
 
-  async function toggleSubscribe(pack, selectedEntryIds = null) {
+  async function toggleSubscribe(pack, selectedEntryIds = null, forceAction = null) {
     error.value = null
     try {
+      const bodyPayload = forceAction ? JSON.stringify({ action: forceAction }) : '{}'
       const res = await authFetch(`/api/workshop/packs/${pack.id}/subscribe`, {
         method: 'POST',
+        headers: forceAction ? { 'Content-Type': 'application/json' } : {},
+        body: forceAction ? bodyPayload : null,
       })
       const json = await res.json()
       if (!res.ok) {

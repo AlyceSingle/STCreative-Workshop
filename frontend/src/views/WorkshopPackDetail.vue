@@ -95,13 +95,22 @@ function triggerBatchImport() {
 }
 
 async function handleBatchImport(event) {
-  const file = event.target.files[0]
-  if (!file) return
+  const files = Array.from(event.target.files)
+  if (!files.length) return
 
-  const reader = new FileReader()
-  reader.onload = async (e) => {
+  let successCount = 0
+  let errorCount = 0
+
+  for (const file of files) {
     try {
-      const data = JSON.parse(e.target.result)
+      const text = await new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = e => resolve(e.target.result)
+        reader.onerror = e => reject(e)
+        reader.readAsText(file)
+      })
+
+      const data = JSON.parse(text)
       const entriesToImport = Array.isArray(data) ? data : [data]
       
       // 预处理导入的数据，映射到后端期望的格式
@@ -168,15 +177,26 @@ async function handleBatchImport(event) {
 
       const ok = await workshopStore.createEntries(packId.value, processedEntries)
       if (ok) {
-        await workshopStore.fetchPack(packId.value) // 重新加载列表
-        workshopStore.stNotification = { type: 'success', message: `成功导入 ${processedEntries.length} 条条目` }
+        successCount += processedEntries.length
+      } else {
+        errorCount++
       }
     } catch (err) {
-      console.error('批量导入失败:', err)
-      workshopStore.error = '批量导入失败：无效的 JSON 文件'
+      console.error('批量导入单文件失败:', file.name, err)
+      errorCount++
     }
   }
-  reader.readAsText(file)
+  
+  if (successCount > 0) {
+    await workshopStore.fetchPack(packId.value) // 重新加载列表
+    workshopStore.stNotification = { 
+      type: 'success', 
+      message: `成功导入 ${successCount} 条条目` + (errorCount > 0 ? `，${errorCount} 个文件失败` : '')
+    }
+  } else if (errorCount > 0) {
+    workshopStore.error = `批量导入失败：无效的 JSON 文件 (${errorCount} 个)`
+  }
+
   event.target.value = ''
 }
 
@@ -186,6 +206,17 @@ function canEditEntry(entry) {
   return authStore.user.id === entry.author_id || isOwner.value || isAdmin.value
 }
 const isStEnv = computed(() => workshopStore.isSillyTavernEnv())
+
+const isSubscribedLocally = computed(() => {
+  if (!pack.value) return false
+  if (workshopStore.isFromStExtension() && workshopStore.stConnected) {
+    return !!workshopStore.subscribedPacksInST[packId.value]
+  }
+  if (isStEnv.value) {
+    return !!workshopStore.subscribedPacksInST[packId.value]
+  }
+  return !!pack.value.is_subscribed
+})
 
 // 返回工坊时携带分区参数
 function goBackToWorkshop() {
@@ -227,9 +258,12 @@ const exportEntryIds = ref([])
 
 async function handleSubscribe() {
   if (!authStore.isLoggedIn) { authStore.loginWithDiscord(); return }
+  
+  const currentlySubscribed = isSubscribedLocally.value
+
   // 取消订阅：无需确认，直接执行
-  if (pack.value?.is_subscribed) {
-    workshopStore.toggleSubscribe(pack.value)
+  if (currentlySubscribed) {
+    await workshopStore.toggleSubscribe(pack.value, null, 'unsubscribe')
     return
   }
   // 订阅：弹出确认框，初始化目标世界书名称
@@ -259,8 +293,8 @@ async function confirmSubscribe() {
     const slug = pack.value?.workshop?.slug || pack.value?.section || 'default'
     workshopStore.setWorldbookName(slug, targetWorldbookName.value.trim())
   }
-  // 传入选中的条目 ID 列表
-  await workshopStore.toggleSubscribe(pack.value, selectedEntryIds.value)
+  // 传入选中的条目 ID 列表，传 'subscribe' 固定操作方向
+  await workshopStore.toggleSubscribe(pack.value, selectedEntryIds.value, 'subscribe')
 }
 
 async function handleDeletePack() {
@@ -370,7 +404,7 @@ watch(() => workshopStore.stNotification, (notif) => {
         <div class="flex items-center gap-4 flex-wrap text-xs" style="color:#A8A29E; font-family:'Nunito',sans-serif;">
           <span>{{ pack.entry_count }} 条条目</span>
           <span>{{ new Date(pack.created_at).toLocaleDateString('zh-CN') }} 发布</span>
-          <span v-if="isStEnv && pack.is_subscribed" style="color:#16A34A; font-weight:700;">✓ 已插入世界书</span>
+          <span v-if="(isStEnv || (workshopStore.isFromStExtension() && workshopStore.stConnected)) && isSubscribedLocally" style="color:#16A34A; font-weight:700;">✓ 已插入世界书</span>
         </div>
 
         <!-- 操作按钮行 -->
@@ -393,7 +427,7 @@ watch(() => workshopStore.stNotification, (notif) => {
           <!-- 订阅 -->
           <button
             class="btn-action-sub flex items-center gap-1.5 px-4 py-2 rounded-full font-bold text-sm transition-all duration-150"
-            :style="pack.is_subscribed
+            :style="isSubscribedLocally
               ? 'background:#F0FDF4; color:#16A34A; border:2.5px solid #22C55E; box-shadow:3px 3px 0 #22C55E;'
               : 'background:#FFFBF0; color:#A8A29E; border:2.5px solid #E7E5E4; box-shadow:3px 3px 0 #E7E5E4;'"
             @click="handleSubscribe"
@@ -406,10 +440,10 @@ watch(() => workshopStore.stNotification, (notif) => {
             <span v-if="workshopStore.stLoading">处理中…</span>
             <template v-else>
               <span v-if="workshopStore.isFromStExtension() && workshopStore.stConnected">
-                {{ pack.is_subscribed ? '取消订阅' : '订阅到 ST' }}（{{ pack.sub_count }}）
+                {{ isSubscribedLocally ? '取消订阅' : '订阅到 ST' }}（{{ pack.sub_count }}）
               </span>
               <span v-else>
-                {{ pack.is_subscribed ? '取消订阅' : '订阅' }}（{{ pack.sub_count }}）
+                {{ isSubscribedLocally ? '取消订阅' : '订阅' }}（{{ pack.sub_count }}）
               </span>
             </template>
           </button>
@@ -436,7 +470,7 @@ watch(() => workshopStore.stNotification, (notif) => {
         </h2>
         <div class="flex items-center gap-2">
           <template v-if="canAddEntry">
-            <input type="file" ref="batchFileInput" class="hidden" accept=".json" @change="handleBatchImport" />
+            <input type="file" ref="batchFileInput" class="hidden" accept=".json" multiple @change="handleBatchImport" />
             <button type="button" class="btn-secondary text-sm py-1.5 px-3" @click="triggerBatchImport">
             导入 JSON
             </button>

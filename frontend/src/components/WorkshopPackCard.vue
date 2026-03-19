@@ -18,6 +18,16 @@ const authStore = useAuthStore()
 
 const isOwner = computed(() => authStore.user && authStore.user.id === props.pack.author.id)
 
+const isSubscribedLocally = computed(() => {
+  if (workshopStore.isFromStExtension() && workshopStore.stConnected) {
+    return !!workshopStore.subscribedPacksInST[props.pack.id]
+  }
+  if (workshopStore.isSillyTavernEnv()) {
+    return !!workshopStore.subscribedPacksInST[props.pack.id]
+  }
+  return !!props.pack.is_subscribed
+})
+
 // 订阅确认弹窗状态
 const showSubConfirm = ref(false)
 const targetWorldbookName = ref('')
@@ -39,9 +49,11 @@ async function handleSubscribe(e) {
     authStore.loginWithDiscord()
     return
   }
+  const currentlySubscribed = isSubscribedLocally.value
+
   // 取消订阅：无需确认，直接执行
-  if (props.pack.is_subscribed) {
-    workshopStore.toggleSubscribe(props.pack)
+  if (currentlySubscribed) {
+    await workshopStore.toggleSubscribe(props.pack, null, 'unsubscribe')
     return
   }
   // 订阅：弹出确认框，初始化目标世界书名称
@@ -71,8 +83,8 @@ async function confirmSubscribe() {
     const slug = props.pack.workshop?.slug || props.pack.section || 'default'
     workshopStore.setWorldbookName(slug, targetWorldbookName.value.trim())
   }
-  // 传入选中的条目 ID 列表
-  await workshopStore.toggleSubscribe(props.pack, selectedEntryIds.value)
+  // 传入选中的条目 ID 列表，并强制操作方向
+  await workshopStore.toggleSubscribe(props.pack, selectedEntryIds.value, 'subscribe')
 }
 
 function cancelSubscribe() {
@@ -161,11 +173,11 @@ function goToDetail() {
         <!-- 订阅 -->
         <button
           class="btn-action-sub flex items-center gap-1 px-2.5 py-1 rounded-full transition-all duration-150 text-xs font-bold"
-          :style="pack.is_subscribed
+          :style="isSubscribedLocally
             ? 'background:#F0FDF4; color:#16A34A; border:2px solid #22C55E; box-shadow:2px 2px 0 #22C55E;'
             : 'background:#FFFBF0; color:#A8A29E; border:2px solid #E7E5E4; box-shadow:2px 2px 0 #E7E5E4;'"
           @click="handleSubscribe"
-          :title="pack.is_subscribed ? '取消订阅' : '订阅'"
+          :title="isSubscribedLocally ? '取消订阅' : '订阅'"
         >
           <svg class="sub-icon w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 22c1.1 0 2-.9 2-2H10c0 1.1.9 2 2 2z"/>
