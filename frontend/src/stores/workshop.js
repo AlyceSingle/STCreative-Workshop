@@ -461,6 +461,26 @@ export const useWorkshopStore = defineStore('workshop', () => {
     }
   }
 
+  async function createEntries(packId, entries) {
+    error.value = null
+    try {
+      const res = await authFetch(`/api/workshop/packs/${packId}/entries/batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entries }),
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        error.value = json.error || '批量添加条目失败'
+        return false
+      }
+      return true
+    } catch (err) {
+      error.value = err.message || '批量添加条目失败'
+      return false
+    }
+  }
+
   async function updateEntry(entryId, payload) {
     error.value = null
     try {
@@ -708,8 +728,8 @@ export const useWorkshopStore = defineStore('workshop', () => {
 
       // 若指定了 selectedEntryIds，仅插入被选中的条目
       if (selectedEntryIds !== null) {
-        const idSet = new Set(selectedEntryIds.map(Number))
-        entries = entries.filter(e => idSet.has(Number(e.id)))
+        const idSet = new Set(selectedEntryIds.map(String))
+        entries = entries.filter(e => idSet.has(String(e.id)))
       }
 
       // 转换为 TavernHelper WorldbookEntry 格式（不含 uid）
@@ -862,8 +882,8 @@ export const useWorkshopStore = defineStore('workshop', () => {
 
       // 若指定了 selectedEntryIds，仅插入被选中的条目
       if (selectedEntryIds !== null) {
-        const idSet = new Set(selectedEntryIds.map(Number))
-        entries = entries.filter(e => idSet.has(Number(e.id)))
+        const idSet = new Set(selectedEntryIds.map(String))
+        entries = entries.filter(e => idSet.has(String(e.id)))
       }
 
       // 确保世界书存在
@@ -957,6 +977,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
     updatePack,
     deletePack,
     createEntry,
+    createEntries,
     updateEntry,
     deleteEntry,
     scanSubscribedPacks,

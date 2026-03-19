@@ -608,6 +608,76 @@ router.post('/packs/:packId/entries', requireAuth, (req, res) => {
   }
 });
 
+// POST /api/workshop/packs/:packId/entries/batch — 批量新建条目（仅作者）
+router.post('/packs/:packId/entries/batch', requireAuth, (req, res) => {
+  const db = getDb();
+  const packId = parseInt(req.params.packId);
+  if (isNaN(packId)) return res.status(400).json({ error: '无效的模组 ID' });
+
+  const pack = db.prepare(`SELECT author_id FROM workshop_packs WHERE id = ?`).get(packId);
+  if (!pack) return res.status(404).json({ error: '模组不存在' });
+  
+  const isPackAuthor = pack.author_id === req.user.id;
+  const isAdmin = req.user.role === 'admin';
+  if (!isPackAuthor && !isAdmin) {
+    return res.status(403).json({ error: '只有模组作者或管理员才能批量添加条目' });
+  }
+
+  const { entries } = req.body;
+  if (!Array.isArray(entries)) return res.status(400).json({ error: '数据格式错误，应为数组' });
+
+  try {
+    const insert = db.prepare(`
+      INSERT INTO workshop_entries (
+        pack_id, author_id, name, enabled, content, strategy_type,
+        keys, keys_secondary_logic, keys_secondary,
+        scan_depth, position_type, position_order, position_depth, position_role,
+        probability,
+        recursion_prevent_incoming, recursion_prevent_outgoing, recursion_delay_until,
+        effect_sticky, effect_cooldown, effect_delay
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const batchInsert = db.transaction((data) => {
+      for (const entry of data) {
+        if (!entry.name) continue;
+        insert.run(
+          packId, req.user.id,
+          String(entry.name).trim().substring(0, 200),
+          entry.enabled !== false ? 1 : 0,
+          String(entry.content || ''),
+          entry.strategy_type || 'selective',
+          JSON.stringify(Array.isArray(entry.keys) ? entry.keys : []),
+          entry.keys_secondary_logic || 'and_any',
+          JSON.stringify(Array.isArray(entry.keys_secondary) ? entry.keys_secondary : []),
+          entry.scan_depth || 'same_as_global',
+          entry.position_type || 'after_character_definition',
+          parseInt(entry.position_order) || 100,
+          parseInt(entry.position_depth) || 4,
+          entry.position_role || 'system',
+          Math.min(100, Math.max(0, parseInt(entry.probability) ?? 100)),
+          entry.recursion_prevent_incoming ? 1 : 0,
+          entry.recursion_prevent_outgoing ? 1 : 0,
+          entry.recursion_delay_until || null,
+          entry.effect_sticky || null,
+          entry.effect_cooldown || null,
+          entry.effect_delay || null
+        );
+      }
+    });
+
+    batchInsert(entries);
+
+    // 更新 pack 的 updated_at
+    db.prepare(`UPDATE workshop_packs SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(packId);
+
+    res.status(201).json({ message: `成功导入 ${entries.length} 条条目` });
+  } catch (err) {
+    console.error('[Workshop] 批量添加条目失败:', err);
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
+
 // GET /api/workshop/entries/:entryId — 获取单条条目
 router.get('/entries/:entryId', (req, res) => {
   const db = getDb();

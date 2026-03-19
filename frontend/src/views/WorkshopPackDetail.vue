@@ -16,6 +16,170 @@ const isOwner = computed(() => authStore.user && pack.value && authStore.user.id
 const isAdmin = computed(() => authStore.user && authStore.user.role === 'admin')
 const canAddEntry = computed(() => isOwner.value || isAdmin.value)
 
+// 批量导入文件输入
+const batchFileInput = ref(null)
+
+// 导出全量/部分 JSON
+function handleBatchExport() {
+  if (!pack.value || !pack.value.entries) return
+  
+  // 使用导出专用的条目 ID 列表进行过滤
+  const selectedIds = new Set(exportEntryIds.value)
+  const entriesToExport = pack.value.entries.filter(e => selectedIds.has(e.id))
+  
+  if (entriesToExport.length === 0) {
+    alert('请至少选择一个条目进行导出')
+    return
+  }
+
+  showExportConfirm.value = false
+  
+  // 转换为 TavernHelper WorldbookEntry 格式
+  const stEntries = entriesToExport.map(entry => ({
+    name: entry.name,
+    enabled: !!entry.enabled,
+    strategy: {
+      type: entry.strategy_type || 'selective',
+      keys: entry.keys || [],
+      keys_secondary: {
+        logic: entry.keys_secondary_logic || 'and_any',
+        keys: entry.keys_secondary || [],
+      },
+      scan_depth: entry.scan_depth === 'same_as_global' ? 'same_as_global' : (parseInt(entry.scan_depth) || 0)
+    },
+    position: {
+      type: entry.position_type || 'after_character_definition',
+      role: entry.position_role || 'system',
+      depth: parseInt(entry.position_depth) || 4,
+      order: parseInt(entry.position_order) || 100
+    },
+    content: entry.content || '',
+    probability: parseInt(entry.probability) ?? 100,
+    recursion: {
+      prevent_incoming: !!entry.recursion_prevent_incoming,
+      prevent_outgoing: !!entry.recursion_prevent_outgoing,
+      delay_until: entry.recursion_delay_until === '' || entry.recursion_delay_until == null ? null : (parseInt(entry.recursion_delay_until) || 0)
+    },
+    effect: {
+      sticky: entry.effect_sticky === '' || entry.effect_sticky == null ? null : (parseInt(entry.effect_sticky) || 0),
+      cooldown: entry.effect_cooldown === '' || entry.effect_cooldown == null ? null : (parseInt(entry.effect_cooldown) || 0),
+      delay: entry.effect_delay === '' || entry.effect_delay == null ? null : (parseInt(entry.effect_delay) || 0)
+    }
+  }))
+
+  // 根据导出条目数量生成文件名
+  let filename
+  if (entriesToExport.length === 1) {
+    // 单个条目：使用条目名称
+    filename = `${entriesToExport[0].name}.json`
+  } else if (entriesToExport.length === pack.value.entries.length) {
+    // 导出全部条目：使用模组名
+    filename = `${pack.value.title || 'pack'}.json`
+  } else {
+    // 部分条目：使用模组名 + 条目数量
+    filename = `${pack.value.title || 'pack'}_${entriesToExport.length}条.json`
+  }
+
+  const blob = new Blob([JSON.stringify(stEntries, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+// 批量导入 JSON
+function triggerBatchImport() {
+  batchFileInput.value?.click()
+}
+
+async function handleBatchImport(event) {
+  const file = event.target.files[0]
+  if (!file) return
+
+  const reader = new FileReader()
+  reader.onload = async (e) => {
+    try {
+      const data = JSON.parse(e.target.result)
+      const entriesToImport = Array.isArray(data) ? data : [data]
+      
+      // 预处理导入的数据，映射到后端期望的格式
+      const processedEntries = entriesToImport.map(entry => {
+        // 尝试从嵌套结构映射，如果已经是扁平结构则保留
+        const result = {
+          name: entry.name || '未命名条目',
+          enabled: entry.enabled !== undefined ? !!entry.enabled : true,
+          content: entry.content || '',
+        }
+
+        if (entry.strategy) {
+          result.strategy_type = entry.strategy.type || 'selective'
+          result.keys = entry.strategy.keys || []
+          if (entry.strategy.keys_secondary) {
+            result.keys_secondary_logic = entry.strategy.keys_secondary.logic || 'and_any'
+            result.keys_secondary = entry.strategy.keys_secondary.keys || []
+          }
+          result.scan_depth = entry.strategy.scan_depth || 'same_as_global'
+        } else {
+          result.strategy_type = entry.strategy_type || 'selective'
+          result.keys = Array.isArray(entry.keys) ? entry.keys : []
+          result.keys_secondary_logic = entry.keys_secondary_logic || 'and_any'
+          result.keys_secondary = Array.isArray(entry.keys_secondary) ? entry.keys_secondary : []
+          result.scan_depth = entry.scan_depth || 'same_as_global'
+        }
+
+        if (entry.position) {
+          result.position_type = entry.position.type || 'after_character_definition'
+          result.position_role = entry.position.role || 'system'
+          result.position_depth = entry.position.depth !== undefined ? entry.position.depth : 4
+          result.position_order = entry.position.order !== undefined ? entry.position.order : 100
+        } else {
+          result.position_type = entry.position_type || 'after_character_definition'
+          result.position_role = entry.position_role || 'system'
+          result.position_depth = entry.position_depth !== undefined ? entry.position_depth : 4
+          result.position_order = entry.position_order !== undefined ? entry.position_order : 100
+        }
+
+        result.probability = entry.probability !== undefined ? entry.probability : 100
+
+        if (entry.recursion) {
+          result.recursion_prevent_incoming = !!entry.recursion.prevent_incoming
+          result.recursion_prevent_outgoing = !!entry.recursion.prevent_outgoing
+          result.recursion_delay_until = entry.recursion.delay_until || null
+        } else {
+          result.recursion_prevent_incoming = !!entry.recursion_prevent_incoming
+          result.recursion_prevent_outgoing = !!entry.recursion_prevent_outgoing
+          result.recursion_delay_until = entry.recursion_delay_until || null
+        }
+
+        if (entry.effect) {
+          result.effect_sticky = entry.effect.sticky || null
+          result.effect_cooldown = entry.effect.cooldown || null
+          result.effect_delay = entry.effect.delay || null
+        } else {
+          result.effect_sticky = entry.effect_sticky || null
+          result.effect_cooldown = entry.effect_cooldown || null
+          result.effect_delay = entry.effect_delay || null
+        }
+
+        return result
+      })
+
+      const ok = await workshopStore.createEntries(packId.value, processedEntries)
+      if (ok) {
+        await workshopStore.fetchPack(packId.value) // 重新加载列表
+        workshopStore.stNotification = { type: 'success', message: `成功导入 ${processedEntries.length} 条条目` }
+      }
+    } catch (err) {
+      console.error('批量导入失败:', err)
+      workshopStore.error = '批量导入失败：无效的 JSON 文件'
+    }
+  }
+  reader.readAsText(file)
+  event.target.value = ''
+}
+
 // 判断用户是否可编辑某条目（条目作者本人 或 pack 作者 或 管理员）
 function canEditEntry(entry) {
   if (!authStore.user) return false
@@ -54,9 +218,12 @@ async function handleLike() {
 
 // 订阅确认弹窗状态
 const showSubConfirm = ref(false)
+const showExportConfirm = ref(false)
 const targetWorldbookName = ref('')
 // 条目选择（所有条目 ID 的列表，默认全部选中）
 const selectedEntryIds = ref([])
+// 导出条目选择（独立状态，避免与订阅弹窗混淆）
+const exportEntryIds = ref([])
 
 async function handleSubscribe() {
   if (!authStore.isLoggedIn) { authStore.loginWithDiscord(); return }
@@ -76,6 +243,13 @@ async function handleSubscribe() {
   selectedEntryIds.value = (pack.value?.entries || []).map(e => e.id)
   
   showSubConfirm.value = true
+}
+
+function handleOpenExport() {
+  if (!pack.value || !pack.value.entries || pack.value.entries.length === 0) return
+  // 初始化导出条目选择列表（默认全选）
+  exportEntryIds.value = pack.value.entries.map(e => e.id)
+  showExportConfirm.value = true
 }
 
 async function confirmSubscribe() {
@@ -260,17 +434,24 @@ watch(() => workshopStore.stNotification, (notif) => {
         <h2 class="font-bold text-lg" style="font-family:'Fredoka',sans-serif; color:#EA580C;">
           条目列表
         </h2>
-        <RouterLink
-          v-if="canAddEntry"
-          :to="{ name: 'workshop-entry-new', params: { packId: pack.id } }"
-          class="btn-primary text-sm"
-        >
-          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19"/>
-            <line x1="5" y1="12" x2="19" y12="12"/>
-          </svg>
-          添加条目
-        </RouterLink>
+        <div class="flex items-center gap-2">
+          <template v-if="canAddEntry">
+            <input type="file" ref="batchFileInput" class="hidden" accept=".json" @change="handleBatchImport" />
+            <button type="button" class="btn-secondary text-sm py-1.5 px-3" @click="triggerBatchImport">
+            导入 JSON
+            </button>
+          </template>
+          <button type="button" class="btn-secondary text-sm py-1.5 px-3" @click="handleOpenExport">
+            导出 JSON
+          </button>
+          <RouterLink
+            v-if="canAddEntry"
+            :to="{ name: 'workshop-entry-new', params: { packId: pack.id } }"
+            class="btn-primary text-sm"
+          >
+            添加条目
+          </RouterLink>
+        </div>
       </div>
 
       <!-- 无条目 -->
@@ -435,6 +616,58 @@ watch(() => workshopStore.stNotification, (notif) => {
         </div>
         <p class="text-[10px] text-[#78350F] opacity-80">
           已选择 {{ selectedEntryIds.length }} / {{ pack.entries.length }} 条
+        </p>
+      </div>
+    </div>
+  </ConfirmModal>
+
+  <!-- 导出确认弹窗 -->
+  <ConfirmModal
+    v-if="showExportConfirm"
+    title="导出条目"
+    confirm-text="确认导出"
+    cancel-text="取消"
+    @confirm="handleBatchExport"
+    @cancel="showExportConfirm = false"
+  >
+    <div class="flex flex-col gap-4">
+      <p>选择要导出的条目：</p>
+      
+      <!-- 条目选择列表 -->
+      <div v-if="pack?.entries && pack.entries.length > 0" class="flex flex-col gap-2 p-3 rounded-xl bg-[#FFFBF0] border border-[#FDBA74]">
+        <div class="flex items-center justify-between">
+          <label class="text-[10px] font-bold text-[#78350F] uppercase tracking-wider">待导出条目</label>
+          <button 
+            @click.stop="exportEntryIds = exportEntryIds.length === pack.entries.length ? [] : pack.entries.map(e => e.id)"
+            class="text-[10px] font-bold px-2 py-0.5 rounded"
+            style="background:#FFF7ED; color:#EA580C; border:1px solid #FDBA74;"
+          >
+            {{ exportEntryIds.length === pack.entries.length ? '取消全选' : '全选' }}
+          </button>
+        </div>
+        <div class="max-h-[300px] overflow-y-auto custom-scrollbar flex flex-col gap-1">
+          <label 
+            v-for="entry in pack.entries" 
+            :key="entry.id"
+            class="flex items-start gap-2 p-2 rounded-lg hover:bg-[#FFF7ED] transition-colors cursor-pointer"
+            style="border:1px solid transparent;"
+            :style="exportEntryIds.includes(entry.id) ? 'background:#FFF7ED; border-color:#FDBA74;' : ''"
+          >
+            <input 
+              type="checkbox"
+              :value="entry.id"
+              v-model="exportEntryIds"
+              class="mt-0.5 flex-shrink-0"
+              style="accent-color:#F97316;"
+            />
+            <div class="flex-1 min-w-0">
+              <div class="text-xs font-bold truncate" style="color:#431407;">{{ entry.name }}</div>
+              <div v-if="entry.content" class="text-[10px] line-clamp-1 mt-0.5" style="color:#78716C;">{{ entry.content }}</div>
+            </div>
+          </label>
+        </div>
+        <p class="text-[10px] text-[#78350F] opacity-80">
+          已选择 {{ exportEntryIds.length }} / {{ pack.entries.length }} 条
         </p>
       </div>
     </div>
