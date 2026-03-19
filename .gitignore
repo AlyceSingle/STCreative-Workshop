@@ -2,6 +2,7 @@
 .opencode
 node_modules
 dist
+@types
 
 .env
 
@@ -14,13 +15,16 @@ dist
 *.ps1
 *.sh
 
+#忽略压缩包 图片
 *.jpg
 *.zip
 
+#忽略数据库
 stories.db
 stories.db-shm
 stories.db-wal
 
+#忽略服务器配置
 deploy.js
 nginx.conf
 storyshare.service
