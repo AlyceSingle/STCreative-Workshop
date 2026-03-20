@@ -43,7 +43,7 @@
 
     <!-- 主内容 -->
     <div style="position: relative; z-index: 1;" class="flex flex-col min-h-screen">
-      <Navbar />
+      <Navbar v-if="$route.name !== 'admin'" />
       <main class="flex-1 flex flex-col">
         <RouterView />
       </main>
