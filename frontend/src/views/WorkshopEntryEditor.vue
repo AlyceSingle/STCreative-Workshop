@@ -32,6 +32,7 @@ const form = reactive({
   
   // regex 专属
   regex_find: '',
+  regex_scope: 'global',
   regex_source_user: true,
   regex_source_ai: true,
   regex_source_slash: true,
@@ -121,6 +122,7 @@ onMounted(async () => {
     
     if (form.entry_type === 'regex' && entry.extra_data) {
       form.regex_find = entry.extra_data.find_regex || ''
+      form.regex_scope = entry.extra_data.regex_scope || 'global'
       if (entry.extra_data.source) {
         form.regex_source_user = !!entry.extra_data.source.user_input
         form.regex_source_ai = !!entry.extra_data.source.ai_output
@@ -167,6 +169,7 @@ async function handleSubmit() {
   if (form.entry_type === 'regex') {
     extra_data = {
       find_regex: form.regex_find,
+      regex_scope: form.regex_scope,
       source: {
         user_input: form.regex_source_user,
         ai_output: form.regex_source_ai,
@@ -286,16 +289,26 @@ function goBack() {
       <section v-if="form.entry_type === 'regex'" class="flex flex-col gap-4 p-5" style="border:2px solid #FED7AA; border-radius:16px; background:white;">
         <h2 class="font-bold text-base" style="font-family:'Fredoka',sans-serif; color:#92400E;">正则设置</h2>
 
+        <!-- 正则范围 -->
+        <div class="flex flex-col gap-1">
+          <label class="text-sm font-semibold" style="color:#78716C;">正则作用范围 *</label>
+          <select v-model="form.regex_scope" class="input">
+            <option value="global">全局正则</option>
+            <option value="character">局部正则</option>
+            <option value="preset">预设正则</option>
+          </select>
+        </div>
+
         <!-- Find Regex -->
         <div class="flex flex-col gap-1">
-          <label class="text-sm font-semibold" style="color:#78716C;">匹配正则 (Find Regex) *</label>
+          <label class="text-sm font-semibold" style="color:#78716C;">匹配正则 *</label>
           <input v-model="form.regex_find" type="text" class="input" placeholder="输入正则表达式" style="font-family:'Nunito',monospace;" required />
         </div>
 
         <div class="grid grid-cols-2 gap-4">
           <!-- 匹配来源 -->
           <div class="flex flex-col gap-2">
-            <label class="text-sm font-semibold" style="color:#78716C;">匹配来源 (Source)</label>
+            <label class="text-sm font-semibold" style="color:#78716C;">匹配来源</label>
             <label class="flex items-center gap-2 cursor-pointer select-none">
               <input v-model="form.regex_source_user" type="checkbox" class="w-4 h-4 accent-orange-500" />
               <span class="text-sm text-gray-700">用户输入</span>

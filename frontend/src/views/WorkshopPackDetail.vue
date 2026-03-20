@@ -20,6 +20,16 @@ const worldbookEntries = computed(() => pack.value?.entries?.filter(e => e.entry
 const regexEntries = computed(() => pack.value?.entries?.filter(e => e.entry_type === 'regex') || [])
 const greetingEntries = computed(() => pack.value?.entries?.filter(e => e.entry_type === 'greeting') || [])
 
+const entryCountLabel = computed(() => {
+  if (!pack.value) return ''
+  const parts = []
+  if (worldbookEntries.value.length) parts.push(`${worldbookEntries.value.length} 世界书`)
+  if (regexEntries.value.length) parts.push(`${regexEntries.value.length} 正则`)
+  if (greetingEntries.value.length) parts.push(`${greetingEntries.value.length} 开场白`)
+  if (parts.length === 0) return '0 条条目'
+  return parts.join(' · ')
+})
+
 // 批量导入文件输入
 const batchFileInput = ref(null)
 
@@ -38,38 +48,60 @@ function handleBatchExport() {
 
   showExportConfirm.value = false
   
-  // 转换为 TavernHelper WorldbookEntry 格式
-  const stEntries = entriesToExport.map(entry => ({
-    name: entry.name,
-    enabled: !!entry.enabled,
-    strategy: {
-      type: entry.strategy_type || 'selective',
-      keys: entry.keys || [],
-      keys_secondary: {
-        logic: entry.keys_secondary_logic || 'and_any',
-        keys: entry.keys_secondary || [],
-      },
-      scan_depth: entry.scan_depth === 'same_as_global' ? 'same_as_global' : (parseInt(entry.scan_depth) || 0)
-    },
-    position: {
-      type: entry.position_type || 'after_character_definition',
-      role: entry.position_role || 'system',
-      depth: parseInt(entry.position_depth) || 4,
-      order: parseInt(entry.position_order) || 100
-    },
-    content: entry.content || '',
-    probability: parseInt(entry.probability) ?? 100,
-    recursion: {
-      prevent_incoming: !!entry.recursion_prevent_incoming,
-      prevent_outgoing: !!entry.recursion_prevent_outgoing,
-      delay_until: entry.recursion_delay_until === '' || entry.recursion_delay_until == null ? null : (parseInt(entry.recursion_delay_until) || 0)
-    },
-    effect: {
-      sticky: entry.effect_sticky === '' || entry.effect_sticky == null ? null : (parseInt(entry.effect_sticky) || 0),
-      cooldown: entry.effect_cooldown === '' || entry.effect_cooldown == null ? null : (parseInt(entry.effect_cooldown) || 0),
-      delay: entry.effect_delay === '' || entry.effect_delay == null ? null : (parseInt(entry.effect_delay) || 0)
+  const exportData = {
+    entries: [],
+    regexes: [],
+    greetings: []
+  }
+
+  entriesToExport.forEach(entry => {
+    if (entry.entry_type === 'regex') {
+      exportData.regexes.push({
+        name: entry.name,
+        enabled: !!entry.enabled,
+        content: entry.content || '',
+        extra_data: entry.extra_data || {}
+      })
+    } else if (entry.entry_type === 'greeting') {
+      exportData.greetings.push({
+        name: entry.name,
+        enabled: !!entry.enabled,
+        content: entry.content || ''
+      })
+    } else {
+      exportData.entries.push({
+        name: entry.name,
+        enabled: !!entry.enabled,
+        strategy: {
+          type: entry.strategy_type || 'selective',
+          keys: entry.keys || [],
+          keys_secondary: {
+            logic: entry.keys_secondary_logic || 'and_any',
+            keys: entry.keys_secondary || [],
+          },
+          scan_depth: entry.scan_depth === 'same_as_global' ? 'same_as_global' : (parseInt(entry.scan_depth) || 0)
+        },
+        position: {
+          type: entry.position_type || 'after_character_definition',
+          role: entry.position_role || 'system',
+          depth: parseInt(entry.position_depth) || 4,
+          order: parseInt(entry.position_order) || 100
+        },
+        content: entry.content || '',
+        probability: parseInt(entry.probability) ?? 100,
+        recursion: {
+          prevent_incoming: !!entry.recursion_prevent_incoming,
+          prevent_outgoing: !!entry.recursion_prevent_outgoing,
+          delay_until: entry.recursion_delay_until === '' || entry.recursion_delay_until == null ? null : (parseInt(entry.recursion_delay_until) || 0)
+        },
+        effect: {
+          sticky: entry.effect_sticky === '' || entry.effect_sticky == null ? null : (parseInt(entry.effect_sticky) || 0),
+          cooldown: entry.effect_cooldown === '' || entry.effect_cooldown == null ? null : (parseInt(entry.effect_cooldown) || 0),
+          delay: entry.effect_delay === '' || entry.effect_delay == null ? null : (parseInt(entry.effect_delay) || 0)
+        }
+      })
     }
-  }))
+  })
 
   // 根据导出条目数量生成文件名
   let filename
@@ -84,7 +116,7 @@ function handleBatchExport() {
     filename = `${pack.value.title || 'pack'}_${entriesToExport.length}条.json`
   }
 
-  const blob = new Blob([JSON.stringify(stEntries, null, 2)], { type: 'application/json' })
+  const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
@@ -115,7 +147,14 @@ async function handleBatchImport(event) {
       })
 
       const data = JSON.parse(text)
-      const entriesToImport = Array.isArray(data) ? data : [data]
+      let entriesToImport = []
+      if (Array.isArray(data)) {
+        entriesToImport = data.map(e => ({ ...e, entry_type: e.entry_type || 'worldbook' }))
+      } else {
+        if (Array.isArray(data.entries)) entriesToImport.push(...data.entries.map(e => ({ ...e, entry_type: 'worldbook' })))
+        if (Array.isArray(data.regexes)) entriesToImport.push(...data.regexes.map(e => ({ ...e, entry_type: 'regex' })))
+        if (Array.isArray(data.greetings)) entriesToImport.push(...data.greetings.map(e => ({ ...e, entry_type: 'greeting' })))
+      }
       
       // 预处理导入的数据，映射到后端期望的格式
       const processedEntries = entriesToImport.map(entry => {
@@ -124,6 +163,8 @@ async function handleBatchImport(event) {
           name: entry.name || '未命名条目',
           enabled: entry.enabled !== undefined ? !!entry.enabled : true,
           content: entry.content || '',
+          entry_type: entry.entry_type || 'worldbook',
+          extra_data: entry.extra_data || {}
         }
 
         if (entry.strategy) {
@@ -406,7 +447,7 @@ watch(() => workshopStore.stNotification, (notif) => {
 
         <!-- 元数据行 -->
         <div class="flex items-center gap-4 flex-wrap text-xs" style="color:#A8A29E; font-family:'Nunito',sans-serif;">
-          <span>{{ pack.entry_count }} 条条目</span>
+          <span>{{ entryCountLabel }}</span>
           <span>{{ new Date(pack.created_at).toLocaleDateString('zh-CN') }} 发布</span>
           <span v-if="(isStEnv || (workshopStore.isFromStExtension() && workshopStore.stConnected)) && isSubscribedLocally" style="color:#16A34A; font-weight:700;">✓ 已插入世界书</span>
         </div>
@@ -613,39 +654,58 @@ watch(() => workshopStore.stNotification, (notif) => {
       </div>
 
       <!-- 条目选择列表 -->
-      <div v-if="pack?.entries && pack.entries.length > 0" class="flex flex-col gap-2 p-3 rounded-xl bg-[#FFFBF0] border border-[#FDBA74]">
-        <div class="flex items-center justify-between">
-          <label class="text-[10px] font-bold text-[#78350F] uppercase tracking-wider">选择要插入的条目</label>
-          <button 
+      <div v-if="pack?.entries && pack.entries.length > 0" class="flex flex-col gap-3 p-3 rounded-xl bg-[#FFFBF0] border border-[#FDBA74] max-h-[50vh] overflow-y-auto custom-scrollbar">
+        
+        <div class="flex items-center justify-between pb-2 border-b border-[#FED7AA]">
+           <span class="text-xs font-bold text-[#78350F]">选择要插入的条目</span>
+           <button 
             @click.stop="selectedEntryIds = selectedEntryIds.length === pack.entries.length ? [] : pack.entries.map(e => e.id)"
             class="text-[10px] font-bold px-2 py-0.5 rounded"
             style="background:#FFF7ED; color:#EA580C; border:1px solid #FDBA74;"
           >
-            {{ selectedEntryIds.length === pack.entries.length ? '取消全选' : '全选' }}
+            {{ selectedEntryIds.length === pack.entries.length ? '取消全选' : '全选所有' }}
           </button>
         </div>
-        <div class="max-h-[200px] overflow-y-auto custom-scrollbar flex flex-col gap-1">
-          <label 
-            v-for="entry in pack.entries" 
-            :key="entry.id"
-            class="flex items-start gap-2 p-2 rounded-lg hover:bg-[#FFF7ED] transition-colors cursor-pointer"
-            style="border:1px solid transparent;"
-            :style="selectedEntryIds.includes(entry.id) ? 'background:#FFF7ED; border-color:#FDBA74;' : ''"
-          >
-            <input 
-              type="checkbox"
-              :value="entry.id"
-              v-model="selectedEntryIds"
-              class="mt-0.5 flex-shrink-0"
-              style="accent-color:#F97316;"
-            />
-            <div class="flex-1 min-w-0">
-              <div class="text-xs font-bold truncate" style="color:#431407;">{{ entry.name }}</div>
-              <div v-if="entry.content" class="text-[10px] line-clamp-1 mt-0.5" style="color:#78716C;">{{ entry.content }}</div>
-            </div>
-          </label>
-        </div>
-        <p class="text-[10px] text-[#78350F] opacity-80">
+
+        <template v-if="worldbookEntries.length > 0">
+           <label class="text-[10px] font-bold text-[#92400E] uppercase tracking-wider mb-1">世界书条目 ({{ worldbookEntries.length }})</label>
+           <div class="flex flex-col gap-1 mb-2">
+             <label v-for="entry in worldbookEntries" :key="entry.id" class="flex items-start gap-2 p-2 rounded-lg hover:bg-[#FFF7ED] transition-colors cursor-pointer" :style="selectedEntryIds.includes(entry.id) ? 'background:#FFF7ED;' : ''">
+                <input type="checkbox" :value="entry.id" v-model="selectedEntryIds" class="mt-0.5 flex-shrink-0" style="accent-color:#F97316;" />
+                <div class="flex-1 min-w-0">
+                    <div class="text-xs font-bold truncate text-[#431407]">{{ entry.name }}</div>
+                    <div v-if="entry.content" class="text-[10px] line-clamp-1 mt-0.5 text-[#78716C]">{{ entry.content }}</div>
+                </div>
+             </label>
+           </div>
+        </template>
+
+        <template v-if="regexEntries.length > 0">
+           <label class="text-[10px] font-bold text-[#92400E] uppercase tracking-wider mb-1 mt-1">酒馆正则 ({{ regexEntries.length }})</label>
+           <div class="flex flex-col gap-1 mb-2">
+             <label v-for="entry in regexEntries" :key="entry.id" class="flex items-start gap-2 p-2 rounded-lg hover:bg-[#FFF7ED] transition-colors cursor-pointer" :style="selectedEntryIds.includes(entry.id) ? 'background:#FFF7ED;' : ''">
+                <input type="checkbox" :value="entry.id" v-model="selectedEntryIds" class="mt-0.5 flex-shrink-0" style="accent-color:#F97316;" />
+                <div class="flex-1 min-w-0">
+                    <div class="text-xs font-bold truncate text-[#431407]">{{ entry.name }}</div>
+                </div>
+             </label>
+           </div>
+        </template>
+
+        <template v-if="greetingEntries.length > 0">
+           <label class="text-[10px] font-bold text-[#92400E] uppercase tracking-wider mb-1 mt-1">开场白 ({{ greetingEntries.length }})</label>
+           <div class="flex flex-col gap-1 mb-2">
+             <label v-for="entry in greetingEntries" :key="entry.id" class="flex items-start gap-2 p-2 rounded-lg hover:bg-[#FFF7ED] transition-colors cursor-pointer" :style="selectedEntryIds.includes(entry.id) ? 'background:#FFF7ED;' : ''">
+                <input type="checkbox" :value="entry.id" v-model="selectedEntryIds" class="mt-0.5 flex-shrink-0" style="accent-color:#F97316;" />
+                <div class="flex-1 min-w-0">
+                    <div class="text-xs font-bold truncate text-[#431407]">{{ entry.name }}</div>
+                    <div v-if="entry.content" class="text-[10px] line-clamp-1 mt-0.5 text-[#78716C]">{{ entry.content }}</div>
+                </div>
+             </label>
+           </div>
+        </template>
+
+        <p class="text-[10px] text-[#78350F] opacity-80 mt-2 border-t border-[#FED7AA] pt-2">
           已选择 {{ selectedEntryIds.length }} / {{ pack.entries.length }} 条
         </p>
       </div>
@@ -665,39 +725,58 @@ watch(() => workshopStore.stNotification, (notif) => {
       <p>选择要导出的条目：</p>
       
       <!-- 条目选择列表 -->
-      <div v-if="pack?.entries && pack.entries.length > 0" class="flex flex-col gap-2 p-3 rounded-xl bg-[#FFFBF0] border border-[#FDBA74]">
-        <div class="flex items-center justify-between">
-          <label class="text-[10px] font-bold text-[#78350F] uppercase tracking-wider">待导出条目</label>
-          <button 
+      <div v-if="pack?.entries && pack.entries.length > 0" class="flex flex-col gap-3 p-3 rounded-xl bg-[#FFFBF0] border border-[#FDBA74] max-h-[50vh] overflow-y-auto custom-scrollbar">
+        
+        <div class="flex items-center justify-between pb-2 border-b border-[#FED7AA]">
+           <span class="text-xs font-bold text-[#78350F]">选择内容</span>
+           <button 
             @click.stop="exportEntryIds = exportEntryIds.length === pack.entries.length ? [] : pack.entries.map(e => e.id)"
             class="text-[10px] font-bold px-2 py-0.5 rounded"
             style="background:#FFF7ED; color:#EA580C; border:1px solid #FDBA74;"
           >
-            {{ exportEntryIds.length === pack.entries.length ? '取消全选' : '全选' }}
+            {{ exportEntryIds.length === pack.entries.length ? '取消全选' : '全选所有' }}
           </button>
         </div>
-        <div class="max-h-[300px] overflow-y-auto custom-scrollbar flex flex-col gap-1">
-          <label 
-            v-for="entry in pack.entries" 
-            :key="entry.id"
-            class="flex items-start gap-2 p-2 rounded-lg hover:bg-[#FFF7ED] transition-colors cursor-pointer"
-            style="border:1px solid transparent;"
-            :style="exportEntryIds.includes(entry.id) ? 'background:#FFF7ED; border-color:#FDBA74;' : ''"
-          >
-            <input 
-              type="checkbox"
-              :value="entry.id"
-              v-model="exportEntryIds"
-              class="mt-0.5 flex-shrink-0"
-              style="accent-color:#F97316;"
-            />
-            <div class="flex-1 min-w-0">
-              <div class="text-xs font-bold truncate" style="color:#431407;">{{ entry.name }}</div>
-              <div v-if="entry.content" class="text-[10px] line-clamp-1 mt-0.5" style="color:#78716C;">{{ entry.content }}</div>
-            </div>
-          </label>
-        </div>
-        <p class="text-[10px] text-[#78350F] opacity-80">
+
+        <template v-if="worldbookEntries.length > 0">
+           <label class="text-[10px] font-bold text-[#92400E] uppercase tracking-wider mb-1">世界书条目 ({{ worldbookEntries.length }})</label>
+           <div class="flex flex-col gap-1 mb-2">
+             <label v-for="entry in worldbookEntries" :key="entry.id" class="flex items-start gap-2 p-2 rounded-lg hover:bg-[#FFF7ED] transition-colors cursor-pointer" :style="exportEntryIds.includes(entry.id) ? 'background:#FFF7ED;' : ''">
+                <input type="checkbox" :value="entry.id" v-model="exportEntryIds" class="mt-0.5 flex-shrink-0" style="accent-color:#F97316;" />
+                <div class="flex-1 min-w-0">
+                    <div class="text-xs font-bold truncate text-[#431407]">{{ entry.name }}</div>
+                    <div v-if="entry.content" class="text-[10px] line-clamp-1 mt-0.5 text-[#78716C]">{{ entry.content }}</div>
+                </div>
+             </label>
+           </div>
+        </template>
+
+        <template v-if="regexEntries.length > 0">
+           <label class="text-[10px] font-bold text-[#92400E] uppercase tracking-wider mb-1 mt-1">酒馆正则 ({{ regexEntries.length }})</label>
+           <div class="flex flex-col gap-1 mb-2">
+             <label v-for="entry in regexEntries" :key="entry.id" class="flex items-start gap-2 p-2 rounded-lg hover:bg-[#FFF7ED] transition-colors cursor-pointer" :style="exportEntryIds.includes(entry.id) ? 'background:#FFF7ED;' : ''">
+                <input type="checkbox" :value="entry.id" v-model="exportEntryIds" class="mt-0.5 flex-shrink-0" style="accent-color:#F97316;" />
+                <div class="flex-1 min-w-0">
+                    <div class="text-xs font-bold truncate text-[#431407]">{{ entry.name }}</div>
+                </div>
+             </label>
+           </div>
+        </template>
+
+        <template v-if="greetingEntries.length > 0">
+           <label class="text-[10px] font-bold text-[#92400E] uppercase tracking-wider mb-1 mt-1">开场白 ({{ greetingEntries.length }})</label>
+           <div class="flex flex-col gap-1 mb-2">
+             <label v-for="entry in greetingEntries" :key="entry.id" class="flex items-start gap-2 p-2 rounded-lg hover:bg-[#FFF7ED] transition-colors cursor-pointer" :style="exportEntryIds.includes(entry.id) ? 'background:#FFF7ED;' : ''">
+                <input type="checkbox" :value="entry.id" v-model="exportEntryIds" class="mt-0.5 flex-shrink-0" style="accent-color:#F97316;" />
+                <div class="flex-1 min-w-0">
+                    <div class="text-xs font-bold truncate text-[#431407]">{{ entry.name }}</div>
+                    <div v-if="entry.content" class="text-[10px] line-clamp-1 mt-0.5 text-[#78716C]">{{ entry.content }}</div>
+                </div>
+             </label>
+           </div>
+        </template>
+
+        <p class="text-[10px] text-[#78350F] opacity-80 mt-2 border-t border-[#FED7AA] pt-2">
           已选择 {{ exportEntryIds.length }} / {{ pack.entries.length }} 条
         </p>
       </div>

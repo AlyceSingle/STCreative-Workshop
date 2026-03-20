@@ -304,6 +304,12 @@ export const useWorkshopStore = defineStore('workshop', () => {
     }
   }
 
+  function fetchEntry(entryId) {
+    if (!currentPack.value || !currentPack.value.entries) return null
+    const eid = parseInt(entryId)
+    return currentPack.value.entries.find(e => e.id === eid) || null
+  }
+
   async function createPack(payload) {
     error.value = null
     try {
@@ -398,6 +404,26 @@ export const useWorkshopStore = defineStore('workshop', () => {
   async function toggleSubscribe(pack, selectedEntryIds = null, forceAction = null) {
     error.value = null
     try {
+      // ST 扩展模式：先执行 ST 操作，成功后再调用服务器 API
+      if (stConnected.value) {
+        const isSubscribing = forceAction === 'subscribe' || (!forceAction && !pack.is_subscribed)
+        
+        if (isSubscribing) {
+          const stSuccess = await _subscribeViaST(pack, selectedEntryIds)
+          if (!stSuccess) {
+            // ST 订阅失败，不调用服务器 API
+            return null
+          }
+        } else {
+          const stSuccess = await _unsubscribeViaST(pack.id)
+          if (!stSuccess) {
+            // ST 取消订阅失败，不调用服务器 API
+            return null
+          }
+        }
+      }
+
+      // 调用服务器 API
       const bodyPayload = forceAction ? JSON.stringify({ action: forceAction }) : '{}'
       const res = await authFetch(`/api/workshop/packs/${pack.id}/subscribe`, {
         method: 'POST',
@@ -421,18 +447,8 @@ export const useWorkshopStore = defineStore('workshop', () => {
         currentPack.value.sub_count = json.sub_count
       }
 
-      // ST 扩展模式（stConnected 已是可靠标志，不再依赖 window.opener）
-      if (stConnected.value) {
-        if (json.subscribed) {
-          await _subscribeViaST(pack, selectedEntryIds)
-        } else {
-          await _unsubscribeViaST(pack.id)
-        }
-        return json
-      }
-
-      // 直接嵌入 ST 模式
-      if (isSillyTavernEnv()) {
+      // 直接嵌入 ST 模式（非扩展模式）
+      if (!stConnected.value && isSillyTavernEnv()) {
         if (json.subscribed) {
           await insertPackToWorldbook(pack, selectedEntryIds)
         } else {
@@ -649,7 +665,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
           const { resolve } = _pending[key]
           clearTimeout(_pending[key]?.timer)
           delete _pending[key]
-          resolve({ success, message, removedCount })
+          resolve({ success, message })
         }
         return
       }
@@ -755,11 +771,25 @@ export const useWorkshopStore = defineStore('workshop', () => {
       // 转换为 TavernHelper WorldbookEntry 格式（不含 uid）
       const stEntries = entries.map(entry => toStEntry(entry, pack.id))
 
+      // 分类条目
+      const worldbookEntries = []
+      const regexEntries = []
+      const greetingEntries = []
+
+      for (const entry of stEntries) {
+        if (entry.type === 'regex') regexEntries.push(entry)
+        else if (entry.type === 'greeting') greetingEntries.push(entry)
+        else worldbookEntries.push(entry)
+      }
+
       const result = await _sendToOpener('workshop_subscribe', {
         packId: pack.id,
         packTitle: pack.title,
         worldbookName: worldbookName.value,
         entries: stEntries,
+        worldbookEntries,
+        regexEntries,
+        greetingEntries,
       }, `subscribe_${++_requestCounter}`)
 
       if (result && result.success) {
@@ -1003,6 +1033,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
     // 方法
     fetchPacks,
     fetchPack,
+    fetchEntry,
     fetchWorkshops,
     fetchMySubscriptions,
     toggleLike,
