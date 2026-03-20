@@ -48,6 +48,9 @@
         <RouterView />
       </main>
     </div>
+
+    <!-- Toast 弹窗容器 -->
+    <ToastContainer />
   </div>
 </template>
 
@@ -55,6 +58,7 @@
 import { onMounted } from 'vue'
 import { RouterView } from 'vue-router'
 import Navbar from '@/components/Navbar.vue'
+import ToastContainer from '@/components/ToastContainer.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useWorkshopStore } from '@/stores/workshop'
 
