@@ -1,1 +1,0 @@
-const db = require('better-sqlite3')('backend/db/stories.db'); console.log(db.prepare(SELECT json_group_array(json_object('type', entry_type, 'count', c)) AS counts FROM (SELECT entry_type, COUNT(*) as c FROM workshop_entries e WHERE e.pack_id = 1 GROUP BY entry_type)).get());
