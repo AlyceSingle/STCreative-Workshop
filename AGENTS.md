@@ -169,7 +169,6 @@ To add tests, install `vitest` in the relevant sub-project and add `"test": "vit
 - List: `{ data: [...], pagination: { page, limit, total, totalPages } }`
 - Single item: `{ data: { ... } }`
 - Errors: `{ error: '<Chinese message>' }`
-- Workshop packs list uses `{ packs: [...], pagination: { ... } }` (not `data`).
 
 ### Tags
 - Only preset tags from `TAG_GROUPS` in `config/sections.js` are allowed — no custom input.
