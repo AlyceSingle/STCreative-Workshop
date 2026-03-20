@@ -1,5 +1,5 @@
-import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import {defineStore} from 'pinia'
+import {ref} from 'vue'
 import storiesApi from '@/api/stories'
 
 export const useStoriesStore = defineStore('stories', () => {
@@ -18,7 +18,6 @@ export const useStoriesStore = defineStore('stories', () => {
       stories.value = data.stories
       pagination.value = data.pagination
     } catch (e) {
-      error.value = e.message || e
     } finally {
       loading.value = false
     }
@@ -33,29 +32,17 @@ export const useStoriesStore = defineStore('stories', () => {
   }
 
   async function fetchStory(id) {
-    try {
       return await storiesApi.fetchStory(id)
-    } catch (e) {
-      throw new Error(e.message || e || '故事不存在')
-    }
   }
 
   async function createStory(payload) {
-    try {
       return await storiesApi.createStory(payload)
-    } catch (e) {
-      throw new Error(e.message || e || '发布失败')
-    }
   }
 
   async function deleteStory(id) {
-    try {
-      const data = await storiesApi.deleteStory(id)
-      stories.value = stories.value.filter((s) => s.id !== id)
-      return data
-    } catch (e) {
-      throw new Error(e.message || e || '删除失败')
-    }
+    const data = await storiesApi.deleteStory(id)
+    stories.value = stories.value.filter((s) => s.id !== id)
+    return data
   }
 
   function setActiveTag(tag) {
