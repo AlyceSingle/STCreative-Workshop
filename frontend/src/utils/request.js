@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { toast } from '@/composables/useToast'
 
 const TOKEN_KEY = 'workshop_auth_token'
 
@@ -34,6 +35,7 @@ request.interceptors.response.use(
 
         if (response) {
             const { status, data } = response
+            const errorMsg = data?.error || '请求失败'
 
             switch (status) {
                 case 401:
@@ -45,27 +47,31 @@ request.interceptors.response.use(
                     }
                     break
                 case 403:
-                    console.error('[Axios] 权限不足:', data?.error || '无权访问')
+                    console.error('[Axios] 权限不足:', errorMsg)
                     break
                 case 404:
-                    console.error('[Axios] 资源不存在:', data?.error || '请求的资源不存在')
+                    console.error('[Axios] 资源不存在:', errorMsg)
                     break
                 case 500:
-                    console.error('[Axios] 服务器错误:', data?.error || '服务器内部错误')
+                    console.error('[Axios] 服务器错误:', errorMsg)
                     break
                 default:
-                    console.error(`[Axios] 请求错误 (${status}):`, data?.error || error.message)
+                    console.error(`[Axios] 请求错误 (${status}):`, errorMsg)
             }
+
+            toast.error(errorMsg)
 
             return Promise.reject(data?.error || error.message)
         }
 
         if (error.code === 'ECONNABORTED') {
             console.error('[Axios] 请求超时')
+            toast.error('请求超时，请稍后重试')
             return Promise.reject('请求超时，请稍后重试')
         }
 
         console.error('[Axios] 网络错误:', error.message)
+        toast.error('网络连接失败，请检查网络')
         return Promise.reject('网络连接失败，请检查网络')
     }
 )

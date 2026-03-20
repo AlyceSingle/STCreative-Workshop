@@ -58,3 +58,12 @@ export function useToast() {
     remove: removeToast,
   }
 }
+
+export const toast = {
+  show: addToast,
+  success,
+  info,
+  warning,
+  error,
+  remove: removeToast,
+}
