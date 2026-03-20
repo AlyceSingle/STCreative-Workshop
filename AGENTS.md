@@ -31,7 +31,9 @@ STCreativeWorkshop/
 │   │   ├── auth.js             # /auth/* Discord OAuth2 + /auth/me
 │   │   ├── stories.js          # /api/stories CRUD (legacy)
 │   │   ├── tags.js             # /api/tags (legacy)
-│   │   └── workshop.js         # /api/workshop — workshops, packs, entries, like/subscribe
+│   │   ├── workshop.js         # /api/workshop — workshops, packs, entries, like/subscribe
+│   │   ├── creator.js          # /api/creator — creator applications
+│   │   └── admin.js            # /api/admin — admin panel operations
 │   ├── .env                    # Real secrets — NEVER commit
 │   ├── .env.example            # Env var template
 │   └── server.js               # Express entry point
@@ -174,7 +176,7 @@ To add tests, install `vitest` in the relevant sub-project and add `"test": "vit
 - **WorkshopView default**: `workshopSlug` defaults to `null` (show all workshops). Do **not** default to `'steampunk'`.
 - **Workshop worldbook**: Each workshop has a `worldbook` field (its default target worldbook name). Users can override it per-slug in `localStorage` via `getWorldbookName(slug)` / `saveWorldbookName(slug, name)`. The "恢复默认" button resets to `currentWorkshop.worldbook`.
 - **Production**: `NODE_ENV=production` → Express serves `frontend/dist/` as static files with SPA fallback (`/*splat` → `index.html`).
-- **Vite base path**: `vite.config.js` sets `base: '/StoryShare/'`. All built asset URLs are relative to this sub-path.
+- **Vite base path**: `vite.config.js` sets `base: '/'` (root path). All built assets are served from root in production.
 - **SillyTavern integration**: `workshop.js` store detects `window.SillyTavern` (direct iframe) and `window.opener` (extension popup). Subscribe/unsubscribe calls `window.TavernHelper` API to read/write worldbook entries. Gracefully no-ops outside ST.
 - **ST extension** (`st-extension/`): Vanilla JS, no build step. Opens the workshop site in a popup and relays `TavernHelper` API calls from the popup back into ST. Edit and test manually.
 - **`https-proxy-agent`** must stay at v5 (CJS). v6+ is ESM-only.
