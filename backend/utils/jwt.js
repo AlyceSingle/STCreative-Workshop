@@ -78,7 +78,6 @@ function storePendingToken(key, token, user) {
     },
     createdAt: Date.now(),
   });
-  console.log('[JWT] 存储 pending token, key:', key);
 }
 
 /**
@@ -90,7 +89,6 @@ function consumePendingToken(key) {
   const data = pendingTokens.get(key);
   if (data) {
     pendingTokens.delete(key);
-    console.log('[JWT] 消费 pending token, key:', key);
     return { token: data.token, user: data.user };
   }
   return null;

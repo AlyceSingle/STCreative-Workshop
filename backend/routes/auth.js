@@ -66,7 +66,6 @@ router.get('/discord/callback', (req, res, next) => {
       return res.redirect(`${frontendUrl}?login=failed`);
     }
     if (!user) {
-      console.warn('[Auth] Discord callback no user, info:', info);
       if (authKey) return sendJwtModeCloseHtml(res);
       if (isPopup) return sendPopupCloseHtml(res, false, frontendUrl);
       return res.redirect(`${frontendUrl}?login=failed`);
@@ -76,7 +75,6 @@ router.get('/discord/callback', (req, res, next) => {
     if (authKey) {
       const token = signToken(user);
       storePendingToken(authKey, token, user);
-      console.log('[Auth] JWT 模式登录成功, authKey:', authKey);
       return sendJwtModeCloseHtml(res);
     }
 

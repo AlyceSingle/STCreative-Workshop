@@ -25,7 +25,6 @@ export const useAuthStore = defineStore('auth', () => {
       if (storedToken && storedUser) {
         token.value = storedToken
         user.value = JSON.parse(storedUser)
-        console.log('[Auth] 从 localStorage 恢复登录状态:', user.value?.username)
       }
     } catch (err) {
       console.error('[Auth] 读取 localStorage 失败:', err)
@@ -75,17 +74,14 @@ export const useAuthStore = defineStore('auth', () => {
    */
   async function fetchMe() {
     loading.value = true
-    console.log('[Auth] fetchMe 开始')
     try {
       const headers = getAuthHeaders()
       const res = await fetch('/auth/me', {
         credentials: 'include',
         headers,
       })
-      console.log('[Auth] fetchMe 响应状态:', res.status)
       if (!res.ok) throw new Error('Not authenticated')
       const data = await res.json()
-      console.log('[Auth] fetchMe 响应数据:', data)
       if (data) {
         user.value = data
         // 如果是 JWT 模式，更新缓存的用户信息
@@ -121,8 +117,6 @@ export const useAuthStore = defineStore('auth', () => {
       const authKey = 'ws_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8)
       const origin = window.location.origin
       const authUrl = `${origin}/auth/discord?authKey=${encodeURIComponent(authKey)}`
-      console.log('[Auth] iframe 模式，请求扩展打开 OAuth 弹窗:', authUrl)
-      console.log('[Auth] authKey:', authKey)
 
       // 开始轮询 /auth/poll 获取 token
       let pollCount = 0
@@ -131,14 +125,12 @@ export const useAuthStore = defineStore('auth', () => {
 
       function pollForToken() {
         pollCount++
-        console.log(`[Auth] 轮询 token (${pollCount}/${maxPolls})...`)
 
         fetch(`/auth/poll?key=${encodeURIComponent(authKey)}`)
           .then(res => res.json())
           .then(async data => {
             if (data.token && data.user) {
               // 成功获取 token
-              console.log('[Auth] 获取到 token，用户:', data.user.username)
               token.value = data.token
               user.value = data.user
               saveToStorage(data.token, data.user)
@@ -146,9 +138,6 @@ export const useAuthStore = defineStore('auth', () => {
             } else if (pollCount < maxPolls) {
               // 继续轮询
               setTimeout(pollForToken, pollInterval)
-            } else {
-              // 超时
-              console.warn('[Auth] 轮询超时，未获取到 token')
             }
           })
           .catch(err => {

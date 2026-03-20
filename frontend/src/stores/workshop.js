@@ -571,15 +571,11 @@ export const useWorkshopStore = defineStore('workshop', () => {
       const { type, success, message, packIds, entryCountMap, removedCount, source, primary, additional } = event.data || {}
       if (!type) return
 
-      console.log('[Workshop] 收到消息:', event.data, 'from:', event.origin)
-
       // 特殊处理：接收来自 ST 扩展的 opener 引用
       if (type === 'st_extension_opener' && source === 'st_workshop_extension') {
-        console.log('[Workshop] 接收到 ST 扩展窗口引用')
         _stExtensionWindow = event.source
         // 立即发送 ping
         if (_stExtensionWindow) {
-          console.log('[Workshop] 向 ST 扩展发送 ping')
           _stExtensionWindow.postMessage({ type: 'workshop_ping', payload: {} }, '*')
         }
         return
@@ -588,11 +584,8 @@ export const useWorkshopStore = defineStore('workshop', () => {
       // 安全检查：必须来自 opener、已保存的扩展窗口或 parent（iframe 模式）
       const isFromParent = window.parent && window.parent !== window && event.source === window.parent
       if (event.source !== window.opener && event.source !== _stExtensionWindow && !isFromParent) {
-        console.log('[Workshop] 忽略未知来源的消息')
         return
       }
-
-      console.log('[Workshop] 收到 ST 扩展消息:', event.data)
 
       // 握手响应
       if (type === 'workshop_pong') {
@@ -698,24 +691,16 @@ export const useWorkshopStore = defineStore('workshop', () => {
 
   // 初始化 ST 扩展模式（postMessage 握手）
   async function initStExtensionMode() {
-    console.log('[Workshop] 初始化 ST 扩展模式...')
-    console.log('[Workshop] window.opener:', window.opener)
-    console.log('[Workshop] window.parent !== window:', window.parent !== window)
-    console.log('[Workshop] _stExtensionWindow:', _stExtensionWindow)
-    
     if (stConnected.value) {
-      console.log('[Workshop] 已连接，跳过重复初始化')
       return // 已连接，幂等
     }
 
     // 始终设置监听器，等待扩展发送 opener 引用
-    console.log('[Workshop] 设置消息监听器...')
     _setupMessageListener()
     
     // 弹窗模式：如果有 window.opener，尝试发送 ping
     if (window.opener && window.opener !== window) {
       try {
-        console.log('[Workshop] 检测到 window.opener，发送 ping...')
         window.opener.postMessage({ type: 'workshop_ping', payload: {} }, '*')
       } catch (err) {
         console.error('[Workshop] postMessage 到 opener 失败:', err)
@@ -725,7 +710,6 @@ export const useWorkshopStore = defineStore('workshop', () => {
     // iframe 模式：如果在 iframe 中，尝试向父窗口发送 ping
     if (window.parent && window.parent !== window) {
       try {
-        console.log('[Workshop] 检测到 iframe 模式，发送 ping 到 parent...')
         window.parent.postMessage({ type: 'workshop_ping', payload: {} }, '*')
       } catch (err) {
         console.error('[Workshop] postMessage 到 parent 失败:', err)

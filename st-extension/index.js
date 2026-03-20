@@ -49,8 +49,6 @@ jQuery(async () => {
 
   // 监听 window message 事件（接收来自 iframe 的消息）
   window.addEventListener('message', handleWorkshopMessage, false);
-
-  console.log('[ST创意工坊] 扩展已加载');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -91,7 +89,6 @@ function openWorkshop() {
   // iframe 加载完成后开始握手
   workshopIframe.addEventListener('load', () => {
     workshopWindow = workshopIframe.contentWindow;
-    console.log('[ST创意工坊] iframe 已加载，开始握手...');
     startHandshake();
   });
 }
@@ -124,7 +121,6 @@ function startHandshake() {
       }, '*');
       attempts++;
       if (attempts >= 40) { // 最多 20 秒
-        console.warn('[ST创意工坊] 握手超时（20 秒），停止重试');
         clearInterval(handshakeInterval);
         handshakeInterval = null;
       }
@@ -151,10 +147,7 @@ async function handleWorkshopMessage(event) {
   if (!rawType) return;
   const type = String(rawType).trim();
 
-  console.log(`[ST创意工坊] 收到消息: "${type}" (长度: ${type.length})`, payload);
-
   if (type === 'workshop_ping') {
-    console.log('[ST创意工坊] 握手完成，发送 pong');
     if (handshakeInterval) {
       clearInterval(handshakeInterval);
       handshakeInterval = null;
@@ -184,7 +177,7 @@ async function handleWorkshopMessage(event) {
     await handleGetWorldbookEntries(payload);
   } 
   else {
-    console.warn(`[ST创意工坊] 未知消息类型: "${type}" (长度: ${type.length})`);
+    // 未知消息类型静默忽略
   }
 }
 
@@ -230,8 +223,6 @@ async function handleGetCurrentWorldbooks(payload) {
       primary = result.primary || null;
       additional = result.additional || [];
     }
-
-    console.log('[ST创意工坊] 当前角色世界书:', { primary, additional });
     
     sendResult('workshop_get_current_worldbooks_result', {
       success: true,
@@ -264,11 +255,9 @@ async function handleGetWorldbookEntries(payload) {
 
     // 1. 获取用户拥有的所有世界书名称（不限于当前角色绑定的）
     const allNames = await TH.getWorldbookNames();
-    console.log('[ST创意工坊] 当前酒馆所有世界书:', allNames);
     
     // 2. 在全量列表中进行匹配
     if (!allNames.includes(worldbookName)) {
-      console.log(`[ST创意工坊] 酒馆中不存在世界书: 「${worldbookName}」`);
       sendResult('workshop_get_worldbook_entries_result', {
         success: true,
         worldbookName,
@@ -280,7 +269,6 @@ async function handleGetWorldbookEntries(payload) {
 
     // 3. 如果存在，获取其具体条目
     const entries = await TH.getWorldbook(worldbookName);
-    console.log(`[ST创意工坊] 成功映射世界书「${worldbookName}」，条目数: ${entries.length}`);
     
     sendResult('workshop_get_worldbook_entries_result', {
       success: true,
@@ -310,8 +298,6 @@ async function handleOpenOAuth(payload) {
     return;
   }
 
-  console.log('[ST创意工坊] 打开 OAuth 弹窗:', authUrl);
-
   const w = 500;
   const h = 700;
   const left = Math.max(0, (window.screen.width - w) / 2);
@@ -333,7 +319,6 @@ async function handleOpenOAuth(payload) {
   const oauthMessageHandler = (event) => {
     const { type, success } = event.data || {};
     if (type === 'oauth_login_complete') {
-      console.log('[ST创意工坊] 收到 OAuth 完成通知:', success);
       window.removeEventListener('message', oauthMessageHandler);
       clearInterval(pollTimer);
       clearTimeout(timeoutId);
@@ -341,7 +326,7 @@ async function handleOpenOAuth(payload) {
       try {
         authWindow.close();
       } catch (e) {
-        console.warn('[ST创意工坊] 无法关闭 OAuth 弹窗:', e);
+        // 忽略关闭失败
       }
       // 通知 iframe 里的工坊
       workshopWindow.postMessage({ type: 'workshop_oauth_result', success: true }, '*');
@@ -356,7 +341,6 @@ async function handleOpenOAuth(payload) {
         clearInterval(pollTimer);
         clearTimeout(timeoutId);
         window.removeEventListener('message', oauthMessageHandler);
-        console.log('[ST创意工坊] OAuth 弹窗已关闭，通知工坊刷新登录状态');
         workshopWindow.postMessage({ type: 'workshop_oauth_result', success: true }, '*');
       }
     } catch (err) {
