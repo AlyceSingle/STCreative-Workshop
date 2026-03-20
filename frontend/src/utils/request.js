@@ -42,7 +42,7 @@ request.interceptors.response.use(
                     console.warn('[Axios] 未授权，清除本地认证状态')
                     localStorage.removeItem(TOKEN_KEY)
                     localStorage.removeItem('workshop_auth_user')
-                    if (window.location.pathname !== '/' && !window.location.pathname.startsWith('/auth/')) {
+                    if (window.location.pathname !== '/' && !window.location.pathname.startsWith('/auth/') && !window.location.pathname.startsWith('/admin')) {
                         window.location.href = '/'
                     }
                     break
