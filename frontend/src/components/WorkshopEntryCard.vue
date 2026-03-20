@@ -92,8 +92,8 @@ async function handleDelete() {
     <!-- 内容预览 -->
     <p
       v-if="entry.content"
-      class="text-sm leading-relaxed line-clamp-3"
-      style="color: #78716C; font-family: 'Nunito', sans-serif;"
+      class="text-sm leading-relaxed whitespace-pre-line"
+      style="color: #78716C; font-family: 'Nunito', sans-serif; white-space:pre-line;"
     >
       {{ entry.content }}
     </p>

@@ -37,6 +37,9 @@ function formatPack(row, isLiked = false, isSubscribed = false) {
     like_count: row.like_count,
     sub_count: row.sub_count,
     entry_count: row.entry_count || 0,
+    count_worldbook: row.count_worldbook || 0,
+    count_regex: row.count_regex || 0,
+    count_greeting: row.count_greeting || 0,
     created_at: row.created_at,
     updated_at: row.updated_at,
     is_liked: isLiked,
@@ -146,7 +149,7 @@ router.post('/workshops', requireAuth, (req, res) => {
 });
 
 // PUT /api/workshop/workshops/:id — 编辑工坊（作者或管理员）
-router.put('/workshops/:id', requireAuth, (req, res) => {
+router.put('/workshops/:id',  requireAuth, (req, res) => {
   const db = getDb();
   const wid = parseInt(req.params.id);
   if (isNaN(wid)) return res.status(400).json({ error: '无效的工坊 ID' });
@@ -250,7 +253,10 @@ router.get('/', optionalAuth, (req, res) => {
   const rows = db.prepare(`
     SELECT p.*,
            u.username, u.avatar, u.discord_id, u.display_name,
-           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id) AS entry_count,
+           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id) AS entry_count, 
+           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND e.entry_type='worldbook') AS count_worldbook,
+           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND e.entry_type='regex') AS count_regex,
+           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND e.entry_type='greeting') AS count_greeting,
            w.id as w_id, w.slug as w_slug, w.name as w_name
     FROM workshop_packs p
     JOIN users u ON p.author_id = u.id
@@ -294,7 +300,10 @@ router.get('/packs/:packId', optionalAuth, (req, res) => {
   const row = db.prepare(`
     SELECT p.*,
            u.username, u.avatar, u.discord_id, u.display_name,
-           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id) AS entry_count,
+           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id) AS entry_count, 
+           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND e.entry_type='worldbook') AS count_worldbook,
+           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND e.entry_type='regex') AS count_regex,
+           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND e.entry_type='greeting') AS count_greeting,
            w.id as w_id, w.slug as w_slug, w.name as w_name
     FROM workshop_packs p
     JOIN users u ON p.author_id = u.id
@@ -473,7 +482,10 @@ router.get('/my-subscriptions', requireAuth, (req, res) => {
     const rows = db.prepare(`
       SELECT p.*,
              u.username, u.avatar, u.discord_id, u.display_name,
-             (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id) AS entry_count,
+             (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id) AS entry_count, 
+           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND e.entry_type='worldbook') AS count_worldbook,
+           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND e.entry_type='regex') AS count_regex,
+           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND e.entry_type='greeting') AS count_greeting,
              w.id as w_id, w.slug as w_slug, w.name as w_name,
              s.created_at as subscribed_at
       FROM workshop_subscriptions s
@@ -813,3 +825,4 @@ router.delete('/entries/:entryId', requireAuth, (req, res) => {
 });
 
 module.exports = router;
+

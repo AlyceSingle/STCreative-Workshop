@@ -25,6 +25,11 @@ defineProps({
     type: String,
     default: 'primary',
   },
+  // 确认按钮是否禁用
+  confirmDisabled: {
+    type: Boolean,
+    default: false,
+  },
 })
 
 const emit = defineEmits(['confirm', 'cancel'])
@@ -102,6 +107,7 @@ const emit = defineEmits(['confirm', 'cancel'])
               <button
                 :class="confirmVariant === 'danger' ? 'btn-danger' : 'btn-primary'"
                 class="text-sm"
+                :disabled="confirmDisabled"
                 @click="emit('confirm')"
               >
                 {{ confirmText }}

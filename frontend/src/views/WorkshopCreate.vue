@@ -119,12 +119,12 @@ function goBack() {
             v-model="form.name"
             type="text"
             class="input"
-            placeholder="例如：原神、崩铁…"
+            placeholder="例如：尘史使徒、哥布林杀手等…"
             maxlength="50"
             required
           />
           <p class="text-xs" style="color:#A8A29E; font-family:'Nunito',sans-serif;">
-            最多 50 字，创建后名称可编辑但 slug 不变
+            最多 50 字，创建后名称可编辑
           </p>
         </div>
 
@@ -142,13 +142,13 @@ function goBack() {
         <div class="flex flex-col gap-1">
           <label class="text-sm font-semibold" style="color:#78716C;">
             默认世界书名称
-            <span class="font-normal text-xs ml-1" style="color:#A8A29E;">（订阅模组时的默认写入目标）</span>
+            <span class="font-normal text-xs ml-1" style="color:#A8A29E;">请严格和您角色卡最新版本的世界书匹配，用于查询世界书</span>
           </label>
           <input
             v-model="form.worldbook"
             type="text"
             class="input"
-            placeholder="例如：蒸汽朋克世界书（可选）"
+            placeholder="您的世界书(严格，可修改)"
             maxlength="200"
           />
         </div>
@@ -162,6 +162,7 @@ function goBack() {
         <p class="font-bold mb-1">工坊须知</p>
         <p>・工坊申请需要管理员审批，审批通过后才会对外显示</p>
         <p>・任何登录用户都可以在工坊内创建模组</p>
+        <p>・世界书请和您角色卡最新版本的世界书匹配，用于查询世界书</p>
         <p>・创建的工坊 slug 由名称自动生成，不可更改</p>
       </div>
 

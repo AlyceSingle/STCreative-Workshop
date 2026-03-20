@@ -74,7 +74,6 @@ onMounted(async () => {
   const isInIframe = window.parent && window.parent !== window
   const hasOpener = window.opener && window.opener !== window
   if (isInIframe || hasOpener) {
-    console.log('[App] 检测到扩展模式，初始化 postMessage 监听器...')
     await workshopStore.initStExtensionMode()
   }
 })

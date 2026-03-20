@@ -6,6 +6,8 @@ import CustomSelect from '../components/CustomSelect.vue'
 
 const router = useRouter()
 
+
+// ── 管理员登录状态 ────────────────────────────────────────────────────
 const adminLoggedIn = ref(false)
 const loginForm = ref({ username: '', password: '' })
 const loginError = ref('')
@@ -13,8 +15,9 @@ const loginLoading = ref(false)
 
 async function checkLogin() {
   try {
-    await adminApi.checkLogin()
-    adminLoggedIn.value = true
+    await adminApi.checkLogin(); //axios会自动处理错误的http码
+    adminLoggedIn.value = true;
+    localStorage.setItem('isAdmin', 'true')
   } catch {
     adminLoggedIn.value = false
     localStorage.removeItem('isAdmin')
@@ -27,10 +30,11 @@ async function doLogin() {
   try {
     await adminApi.login(loginForm.value.username, loginForm.value.password)
     adminLoggedIn.value = true
+    localStorage.setItem('isAdmin', 'true')
     activeTab.value = 'applications'
-    loadApplications()
-  } catch (err) {
-    loginError.value = err.message || err || '登录失败'
+    await loadApplications()
+  } catch {
+    loginError.value = '网络错误，请稍后再试'
   } finally {
     loginLoading.value = false
   }
@@ -42,6 +46,7 @@ async function doLogout() {
   localStorage.removeItem('isAdmin')
 }
 
+// ── Tab 切换 ──────────────────────────────────────────────────────────
 const activeTab = ref('applications')
 const sidebarOpen = ref(window.innerWidth >= 1024)
 
@@ -51,14 +56,15 @@ function switchTab(tab) {
   if (tab === 'applications') loadApplications()
   else if (tab === 'users') loadUsers()
   else if (tab === 'packs') loadPacks()
-  else if (tab === 'workshops') loadWorkshopApps()
+  else if (tab === 'workshops') loadWorkshopApps() //TODO：函数未定义？
   else if (tab === 'workshop-manage') loadAllWorkshops()
 }
 
+// ── 申请管理 ──────────────────────────────────────────────────────────
 const applications = ref([])
 const appFilter = ref('pending')
 const appLoading = ref(false)
-const reviewModal = ref(null)
+const reviewModal = ref(null)  // { app, action }
 const reviewNote = ref('')
 const reviewLoading = ref(false)
 
@@ -91,6 +97,7 @@ async function submitReview() {
   }
 }
 
+// ── 用户管理 ──────────────────────────────────────────────────────────
 const users = ref([])
 const userPage = ref(1)
 const userPagination = ref({})
@@ -107,7 +114,7 @@ async function loadUsers(page = 1) {
     if (userQuery.value) params.append('q', userQuery.value)
     if (userRoleFilter.value) params.append('role', userRoleFilter.value)
     if (userBanFilter.value) params.append('is_banned', userBanFilter.value)
-    
+
     const data = await adminApi.fetchUsers(page, userQuery.value)
     users.value = data.data || []
     userPagination.value = data.pagination || {}
@@ -137,6 +144,7 @@ async function changeBanStatus(userId, isBanned, username) {
   await loadUsers(userPage.value)
 }
 
+// ── 模组管理 ──────────────────────────────────────────────────────────
 const packs = ref([])
 const packPage = ref(1)
 const packPagination = ref({})
@@ -153,7 +161,7 @@ async function loadPacks(page = 1) {
     if (packQuery.value) params.append('q', packQuery.value)
     if (packWorkshopFilter.value) params.append('workshop_id', packWorkshopFilter.value)
     if (packSortFilter.value) params.append('sort', packSortFilter.value)
-    
+
     const data = await adminApi.fetchPacks(page, packQuery.value)
     packs.value = data.data || []
     packPagination.value = data.pagination || {}
@@ -179,9 +187,9 @@ const workshopAppsLoading = ref(false)
 const allWorkshops = ref([])
 const workshopStatusFilter = ref('')
 const workshopTypeFilter = ref('')
+const allWorkshopsLoading = ref(false)
 const workshopQuery = ref('')
-// 用于模组筛选的工坊列表
-const availableWorkshops = ref([])
+const availableWorkshops = ref([])  // 用于模组筛选的工坊列表
 
 // 加载可用工坊（修复变量顺序错误）
 async function loadAvailableWorkshops() {
@@ -194,33 +202,6 @@ async function loadAvailableWorkshops() {
   }
 }
 
-// 加载工坊申请
-async function loadWorkshopApps() {
-  workshopAppsLoading.value = true
-  try {
-    const data = await adminApi.fetchWorkshopApplications(workshopAppFilter.value)
-    workshopApps.value = data.data || []
-  } catch (e) {
-    console.error('加载工坊申请失败', e)
-    workshopApps.value = []
-  } finally {
-    workshopAppsLoading.value = false
-  }
-}
-
-async function approveWorkshop(id) {
-  if (!confirm('确认通过该工坊申请？')) return
-  await adminApi.approveWorkshop(id)
-  await loadWorkshopApps()
-}
-
-async function rejectWorkshop(id) {
-  if (!confirm('确认拒绝该工坊申请？')) return
-  await adminApi.rejectWorkshop(id)
-  await loadWorkshopApps()
-}
-
-// 加载所有工坊（合并后修复重复定义）
 async function loadAllWorkshops() {
   allWorkshopsLoading.value = true
   try {
@@ -228,7 +209,7 @@ async function loadAllWorkshops() {
     if (workshopStatusFilter.value) params.set('status', workshopStatusFilter.value)
     if (workshopTypeFilter.value) params.append('type', workshopTypeFilter.value)
     if (workshopQuery.value.trim()) params.append('search', workshopQuery.value.trim())
-    
+
     const data = await adminApi.fetchAllWorkshops(params)
     allWorkshops.value = data.data || []
   } catch {
@@ -246,12 +227,10 @@ async function deleteWorkshop(id, name) {
 
 const userDetail = ref(null)
 const userDetailLoading = ref(false)
-// 补充缺失的 allWorkshopsLoading 定义
-const allWorkshopsLoading = ref(false)
 
 async function loadUserDetail(userId) {
   userDetailLoading.value = true
-  userDetail.value = { loading: true }
+  userDetail.value = { loading: true }  // 先打开弹窗显示加载态
   try {
     const data = await adminApi.fetchUserDetail(userId)
     if (data) {
@@ -266,6 +245,7 @@ async function loadUserDetail(userId) {
   }
 }
 
+// ── 辅助 ──────────────────────────────────────────────────────────────
 const STATUS_MAP = { pending: '待审核', approved: '已通过', rejected: '已拒绝' }
 const STATUS_COLOR = {
   pending:  'background:#FEF9C3; color:#854D0E; border-color:#EAB308;',
@@ -292,8 +272,8 @@ function fmtDate(d) {
 onMounted(async () => {
   await checkLogin()
   if (adminLoggedIn.value) {
-    loadApplications()
-    loadAvailableWorkshops()  // 加载工坊列表供筛选使用
+    await loadApplications()
+    await loadAvailableWorkshops()  // 加载工坊列表供筛选使用
   }
 })
 </script>
@@ -301,6 +281,7 @@ onMounted(async () => {
 <template>
   <div class="min-h-screen" style="background:#FFFBF0;">
 
+    <!-- ═══ 未登录：显示登录表单 ═══════════════════════════════════════ -->
     <div v-if="!adminLoggedIn" class="max-w-sm mx-auto mt-16">
       <div class="card p-8 flex flex-col gap-5">
         <div class="text-center">
@@ -325,12 +306,12 @@ onMounted(async () => {
 
     <!-- ═══ 已登录：管理后台 ════════════════════════════════════════════ -->
     <div v-else class="flex min-h-screen overflow-hidden" style="background:#FFFBF0;">
-      
+
       <!-- 移动端遮罩 -->
       <div v-if="sidebarOpen" class="fixed inset-0 z-30 lg:hidden" style="background:rgba(0,0,0,0.35);" @click="sidebarOpen = false"></div>
 
       <!-- 左侧固定导航栏 -->
-      <aside class="fixed lg:static inset-y-0 left-0 z-40 w-60 flex-shrink-0 flex flex-col transition-all duration-300 ease-in-out" 
+      <aside class="fixed lg:static inset-y-0 left-0 z-40 w-60 flex-shrink-0 flex flex-col transition-all duration-300 ease-in-out"
              :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:-ml-60'"
              style="background:#FFF7ED; border-right:2.5px solid #FDBA74;">
         <!-- 顶部标题 -->
@@ -421,7 +402,7 @@ onMounted(async () => {
 
         <!-- 底部退出按钮 -->
         <div class="p-4" style="border-top:1.5px solid #FED7AA;">
-          <button class="w-full px-4 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2" 
+          <button class="w-full px-4 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2"
             style="background:#FEE2E2; color:#991B1B; border:1.5px solid #FCA5A5;"
             @click="doLogout">
             <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -451,6 +432,7 @@ onMounted(async () => {
 
         <main class="flex-1 px-4 pb-4 lg:px-8 lg:pb-8 max-w-7xl w-full mx-auto">
 
+      <!-- ─── 申请管理 ──────────────────────────────────────────────── -->
       <div v-if="activeTab==='applications'">
         <div class="flex gap-2 mb-4 flex-wrap">
           <button v-for="f in [{k:'pending',l:'待审核'},{k:'approved',l:'已通过'},{k:'rejected',l:'已拒绝'},{k:'all',l:'全部'}]" :key="f.k"
@@ -493,6 +475,7 @@ onMounted(async () => {
         </div>
       </div>
 
+      <!-- ─── 工坊管理 ──────────────────────────────────────────────── -->
       <div v-if="activeTab==='workshop-manage'">
         <!-- 筛选栏 -->
         <div class="flex gap-3 mb-4 flex-wrap items-center">
@@ -506,7 +489,7 @@ onMounted(async () => {
             ]"
             @update:modelValue="loadAllWorkshops"
           />
-          
+
           <CustomSelect
             v-model="workshopTypeFilter"
             :options="[
@@ -539,7 +522,7 @@ onMounted(async () => {
               <p class="text-xs mb-1" style="color:#A8A29E; font-family:'Nunito',sans-serif;">
                 slug: {{ w.slug }} · 申请人：{{ w.author ? w.author.username : '内置' }} · {{ fmtDate(w.created_at) }}
               </p>
-              <p v-if="w.description" class="text-sm rounded-xl px-3 py-2 mt-1" style="background:#FFFBF0; border:1.5px solid #FED7AA; color:#78350F; font-family:'Nunito',sans-serif; word-break:break-word;">{{ w.description }}</p>
+              <p v-if="w.description" class="text-sm rounded-xl px-3 py-2 mt-1 whitespace-pre-line" style="background:#FFFBF0; border:1.5px solid #FED7AA; color:#78350F; font-family:'Nunito',sans-serif; word-break:break-word; white-space:pre-line;">{{ w.description }}</p>
             </div>
             <div class="flex flex-col gap-2 flex-shrink-0 sm:w-24">
               <button v-if="w.author_id !== null" class="btn-secondary text-xs px-3 py-1.5 w-full text-center" @click="router.push({ name: 'workshop-edit', params: { id: w.id } })">编辑</button>
@@ -549,6 +532,7 @@ onMounted(async () => {
         </div>
       </div>
 
+      <!-- ─── 用户管理 ──────────────────────────────────────────────── -->
       <div v-if="activeTab==='users'">
         <!-- 筛选栏 -->
         <div class="flex gap-3 mb-4 flex-wrap items-center">
@@ -563,7 +547,7 @@ onMounted(async () => {
             placeholder="全部角色"
             @update:modelValue="loadUsers(1)"
           />
-          
+
           <CustomSelect
             v-model="userBanFilter"
             :options="[
@@ -574,7 +558,7 @@ onMounted(async () => {
             placeholder="全部状态"
             @update:modelValue="loadUsers(1)"
           />
-          
+
           <input v-model="userQuery" class="input text-sm flex-1" style="min-width: 200px;" placeholder="搜索用户名…" @keyup.enter="loadUsers(1)" />
           <button class="btn-secondary text-sm" @click="loadUsers(1)">搜索</button>
         </div>
@@ -606,13 +590,14 @@ onMounted(async () => {
             </div>
           </div>
         </div>
-        <div v-if="userPagination.totalPages > 1" class="flex justify-center gap-2 mt-6">
-          <button class="btn-secondary text-sm" :disabled="userPage === 1" @click="loadUsers(userPage - 1)">上一页</button>
-          <span class="px-3 py-1.5 text-sm" style="color:#78350F;">{{ userPage }} / {{ userPagination.totalPages }}</span>
-          <button class="btn-secondary text-sm" :disabled="userPage === userPagination.totalPages" @click="loadUsers(userPage + 1)">下一页</button>
+        <div v-if="userPagination.totalPages>1" class="flex items-center justify-center gap-3 mt-6">
+          <button class="btn-secondary text-sm" :disabled="userPage<=1" @click="loadUsers(userPage-1)">上一页</button>
+          <span class="text-sm" style="color:#A8A29E; font-family:'Nunito',sans-serif;">{{ userPage }} / {{ userPagination.totalPages }}</span>
+          <button class="btn-secondary text-sm" :disabled="userPage>=userPagination.totalPages" @click="loadUsers(userPage+1)">下一页</button>
         </div>
       </div>
 
+      <!-- ─── 模组管理 ──────────────────────────────────────────────── -->
       <div v-if="activeTab==='packs'">
         <!-- 筛选栏 -->
         <div class="flex gap-3 mb-4 flex-wrap items-center">
@@ -625,7 +610,7 @@ onMounted(async () => {
             placeholder="全部工坊"
             @update:modelValue="loadPacks(1)"
           />
-          
+
           <CustomSelect
             v-model="packSortFilter"
             :options="[
@@ -635,7 +620,7 @@ onMounted(async () => {
             ]"
             @update:modelValue="loadPacks(1)"
           />
-          
+
           <input v-model="packQuery" class="input text-sm flex-1" style="min-width: 200px;" placeholder="搜索模组标题…" @keyup.enter="loadPacks(1)" />
           <button class="btn-secondary text-sm" @click="loadPacks(1)">搜索</button>
         </div>
@@ -645,27 +630,32 @@ onMounted(async () => {
         <div v-else class="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div v-for="p in packs" :key="p.id" class="card flex-row p-4 items-center gap-3">
             <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-2 flex-wrap mb-1">
-                <span class="font-bold text-sm" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ p.title }}</span>
-                <span class="text-xs" style="color:#A8A29E; font-family:'Nunito',sans-serif;">{{ p.workshop_name }}</span>
-              </div>
+              <p class="font-bold text-sm truncate" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ p.title }}</p>
               <p class="text-xs" style="color:#A8A29E; font-family:'Nunito',sans-serif;">
-                作者：{{ p.author?.username || '—' }} · {{ fmtDate(p.created_at) }} · {{ p.entry_count }} 条目 · {{ p.sub_count }} 订阅
+                {{ p.author.username }} · {{ p.entry_count }} 条目 · {{ p.like_count }} 赞 · {{ p.sub_count }} 订阅 · {{ fmtDate(p.created_at) }}
               </p>
             </div>
-            <button class="btn-danger text-xs px-3 py-1.5 flex-shrink-0" @click="deletePack(p.id, p.title)">删除</button>
+            <span class="text-xs px-2.5 py-1 rounded-full border font-bold flex-shrink-0"
+              style="background:#FFF7ED;color:#78350F;border-color:#FDBA74;">
+              {{ p.workshop_name || p.section || '未知工坊' }}
+            </span>
+            <div class="flex gap-2 flex-shrink-0">
+              <button class="btn-secondary text-xs px-3 py-1.5" @click="router.push({ name: 'workshop-pack-edit', params: { packId: p.id } })">编辑</button>
+              <button class="btn-danger text-xs px-3 py-1.5" @click="deletePack(p.id,p.title)">删除</button>
+            </div>
           </div>
         </div>
-        <div v-if="packPagination.totalPages > 1" class="flex justify-center gap-2 mt-6">
-          <button class="btn-secondary text-sm" :disabled="packPage === 1" @click="loadPacks(packPage - 1)">上一页</button>
-          <span class="px-3 py-1.5 text-sm" style="color:#78350F;">{{ packPage }} / {{ packPagination.totalPages }}</span>
-          <button class="btn-secondary text-sm" :disabled="packPage === packPagination.totalPages" @click="loadPacks(packPage + 1)">下一页</button>
+        <div v-if="packPagination.totalPages>1" class="flex items-center justify-center gap-3 mt-6">
+          <button class="btn-secondary text-sm" :disabled="packPage<=1" @click="loadPacks(packPage-1)">上一页</button>
+          <span class="text-sm" style="color:#A8A29E; font-family:'Nunito',sans-serif;">{{ packPage }} / {{ packPagination.totalPages }}</span>
+          <button class="btn-secondary text-sm" :disabled="packPage>=packPagination.totalPages" @click="loadPacks(packPage+1)">下一页</button>
         </div>
       </div>
 
+      <!-- ─── 工坊申请 ──────────────────────────────────────────────── -->
       <div v-if="activeTab==='workshops'">
         <div class="flex gap-2 mb-4 flex-wrap">
-          <button v-for="f in [{k:'pending',l:'待审核'},{k:'active',l:'已上线'},{k:'rejected',l:'已拒绝'},{k:'all',l:'全部'}]" :key="f.k"
+          <button v-for="f in [{k:'pending',l:'待审核'},{k:'active',l:'已通过'},{k:'rejected',l:'已拒绝'},{k:'all',l:'全部'}]" :key="f.k"
             class="px-4 py-1.5 rounded-full text-xs font-bold transition-all"
             :style="workshopAppFilter===f.k ? 'background:#431407; color:white;' : 'background:#FFF7ED; color:#78350F; border:1.5px solid #FDBA74;'"
             @click="workshopAppFilter=f.k; loadWorkshopApps()">
@@ -685,13 +675,16 @@ onMounted(async () => {
                   :style="w.status==='active' ? 'background:#DCFCE7;color:#14532D;border-color:#22C55E;'
                         : w.status==='rejected' ? 'background:#FEE2E2;color:#991B1B;border-color:#FCA5A5;'
                         : 'background:#FEF9C3;color:#854D0E;border-color:#FDE047;'">
-                  {{ w.status==='active' ? '已上线' : w.status==='rejected' ? '已拒绝' : '待审核' }}
+                  {{ w.status==='active' ? '已通过' : w.status==='rejected' ? '已拒绝' : '待审核' }}
                 </span>
               </div>
               <p class="text-xs mb-1" style="color:#A8A29E; font-family:'Nunito',sans-serif;">
-                slug: {{ w.slug }} · 申请人：{{ w.author?.username || '内置' }} · {{ fmtDate(w.created_at) }}
+                申请人：{{ w.author ? w.author.username : '内置' }} · 申请于 {{ fmtDate(w.created_at) }}
               </p>
               <p v-if="w.description" class="text-sm rounded-xl px-3 py-2 mt-1" style="background:#FFFBF0; border:1.5px solid #FED7AA; color:#78350F; font-family:'Nunito',sans-serif; word-break:break-word;">{{ w.description }}</p>
+              <p v-if="w.worldbook" class="text-xs mt-1" style="color:#78716C; font-family:'Nunito',sans-serif;">
+                <span class="font-bold" style="color:#431407;">默认世界书：</span>{{ w.worldbook }}
+              </p>
             </div>
             <div v-if="w.status==='pending'" class="flex gap-2 flex-shrink-0">
               <button class="btn-primary text-xs px-3 py-1.5" @click="approveWorkshop(w.id)">通过</button>
@@ -700,63 +693,148 @@ onMounted(async () => {
           </div>
         </div>
       </div>
-        
+
         </main>
       </div>
     </div>
 
-    <div v-if="reviewModal" class="fixed inset-0 flex items-center justify-center p-4" style="background:rgba(0,0,0,0.4); z-index:100;">
-      <div class="card p-6 w-full max-w-md flex flex-col gap-4">
-        <h3 class="font-bold text-lg" style="font-family:'Fredoka',sans-serif; color:#431407;">
-          {{ reviewModal.action === 'approve' ? '通过申请' : '拒绝申请' }}
-        </h3>
-        <textarea v-model="reviewNote" class="input resize-y" style="min-height:80px;" placeholder="审核备注（可选）"></textarea>
-        <div class="flex gap-3 justify-end">
-          <button class="btn-secondary text-sm" @click="reviewModal = null">取消</button>
-          <button class="btn-primary text-sm" :disabled="reviewLoading" @click="submitReview">
-            {{ reviewLoading ? '处理中…' : '确认' }}
-          </button>
-        </div>
-      </div>
-    </div>
+    <!-- ═══ 用户详情弹窗 ══════════════════════════════════════════════════ -->
+    <Teleport to="body">
+      <Transition enter-active-class="transition duration-200 ease-out" enter-from-class="opacity-0" enter-to-class="opacity-100"
+        leave-active-class="transition duration-150 ease-in" leave-from-class="opacity-100" leave-to-class="opacity-0">
+        <div v-if="userDetail" class="fixed inset-0 z-50 flex items-center justify-center p-4" style="background:rgba(0,0,0,0.35);" @click.self="userDetail=null">
+          <div class="w-full max-w-lg flex flex-col gap-4 max-h-[85vh]" style="background:#FFFBF0; border:2.5px solid #FDBA74; border-radius:20px; box-shadow:6px 6px 0 #FDBA74; overflow:hidden;">
 
-    <div v-if="userDetail && !userDetail.loading" class="fixed inset-0 flex items-center justify-center p-4" style="background:rgba(0,0,0,0.4); z-index:100;" @click.self="userDetail = null">
-      <div class="card p-6 w-full max-w-lg max-h-[80vh] overflow-y-auto flex flex-col gap-4">
-        <div class="flex items-center justify-between">
-          <h3 class="font-bold text-lg" style="font-family:'Fredoka',sans-serif; color:#431407;">用户详情</h3>
-          <button class="text-sm" style="color:#A8A29E;" @click="userDetail = null">关闭</button>
-        </div>
-        <div class="flex items-center gap-3">
-          <img :src="userDetail.user.avatar ? avatarUrl(userDetail.user.discord_id, userDetail.user.avatar) : avatarUrl(userDetail.user.discord_id, null)"
-            class="w-12 h-12 rounded-full object-cover" style="border:2px solid #FDBA74;" />
-          <div>
-            <p class="font-bold" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ userDetail.user.username }}</p>
-            <p class="text-xs" style="color:#A8A29E;">{{ userDetail.user.email || '—' }}</p>
+            <!-- 加载态 -->
+            <div v-if="userDetail.loading" class="flex items-center justify-center py-16">
+              <div class="w-8 h-8 rounded-full animate-spin" style="border:3px solid #FED7AA; border-top-color:#F97316;"></div>
+            </div>
+
+            <!-- 内容 -->
+            <template v-else>
+              <!-- 顶部：用户信息 -->
+              <div class="flex items-center gap-4 px-6 pt-6 pb-4" style="border-bottom:1.5px solid #FED7AA;">
+                <img :src="userDetail.user.avatar" class="w-12 h-12 rounded-full object-cover flex-shrink-0" style="border:2px solid #FDBA74;" />
+                <div class="flex-1 min-w-0">
+                  <p class="font-bold text-lg leading-tight truncate" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ userDetail.user.username }}</p>
+                  <div class="flex items-center gap-2 mt-1 flex-wrap">
+                    <span class="text-xs px-2 py-0.5 rounded-full border font-bold" :style="roleStyle(userDetail.user.role)">{{ roleLabel(userDetail.user.role) }}</span>
+                    <span class="text-xs" style="color:#A8A29E; font-family:'Nunito',sans-serif;">注册于 {{ fmtDate(userDetail.user.created_at) }}</span>
+                  </div>
+                </div>
+                <button class="flex-shrink-0 p-1.5 rounded-full transition-colors" style="color:#A8A29E; border:1.5px solid #E7E5E4;" @click="userDetail=null">
+                  <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                  </svg>
+                </button>
+              </div>
+
+              <!-- 统计栏 -->
+              <div class="flex gap-6 px-6 text-center">
+                <div v-if="userDetail.user.role==='creator' || userDetail.user.role==='admin'">
+                  <p class="text-2xl font-bold" style="font-family:'Fredoka',sans-serif; color:#F97316;">{{ userDetail.workshops.length }}</p>
+                  <p class="text-xs" style="color:#A8A29E; font-family:'Nunito',sans-serif;">工坊数</p>
+                </div>
+                <div>
+                  <p class="text-2xl font-bold" style="font-family:'Fredoka',sans-serif; color:#F97316;">{{ userDetail.packs.length }}</p>
+                  <p class="text-xs" style="color:#A8A29E; font-family:'Nunito',sans-serif;">模组数</p>
+                </div>
+                <div>
+                  <p class="text-2xl font-bold" style="font-family:'Fredoka',sans-serif; color:#F97316;">{{ userDetail.entry_count }}</p>
+                  <p class="text-xs" style="color:#A8A29E; font-family:'Nunito',sans-serif;">条目总数</p>
+                </div>
+              </div>
+
+              <!-- 内容区 -->
+              <div class="px-6 pb-6 overflow-y-auto flex-1 flex flex-col gap-5">
+                <!-- 工坊列表：仅创作者/管理员显示 -->
+                <div v-if="userDetail.user.role==='creator' || userDetail.user.role==='admin'">
+                  <p class="text-sm font-bold mb-3" style="font-family:'Fredoka',sans-serif; color:#78350F;">工坊列表</p>
+                  <div v-if="!userDetail.workshops.length" class="text-sm text-center py-4" style="color:#A8A29E; font-family:'Nunito',sans-serif;">暂无工坊</div>
+                  <div v-else class="flex flex-col gap-2">
+                    <div v-for="w in userDetail.workshops" :key="w.id"
+                      class="flex items-center gap-3 px-3 py-2.5 rounded-xl"
+                      style="background:#FFF7ED; border:1.5px solid #FED7AA;"
+                    >
+                      <div class="flex-1 min-w-0">
+                        <p class="font-bold text-sm truncate" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ w.name }}</p>
+                        <p class="text-xs mt-0.5" style="color:#A8A29E; font-family:'Nunito',sans-serif;">
+                          {{ w.slug }} · {{ fmtDate(w.created_at) }}
+                        </p>
+                      </div>
+                      <span class="text-xs px-2 py-0.5 rounded-full border font-bold flex-shrink-0"
+                        :style="w.status==='active' ? 'background:#DCFCE7;color:#14532D;border-color:#22C55E;'
+                              : w.status==='rejected' ? 'background:#FEE2E2;color:#991B1B;border-color:#FCA5A5;'
+                              : 'background:#FEF9C3;color:#854D0E;border-color:#FDE047;'">
+                        {{ w.status==='active' ? '已上线' : w.status==='rejected' ? '已拒绝' : '待审核' }}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 模组列表 -->
+                <div>
+                  <p class="text-sm font-bold mb-3" style="font-family:'Fredoka',sans-serif; color:#78350F;">模组列表</p>
+                  <div v-if="!userDetail.packs.length" class="text-sm text-center py-4" style="color:#A8A29E; font-family:'Nunito',sans-serif;">暂无模组</div>
+                  <div v-else class="flex flex-col gap-2">
+                    <div v-for="pack in userDetail.packs" :key="pack.id"
+                      class="flex items-center gap-3 px-3 py-2.5 rounded-xl"
+                      style="background:#FFF7ED; border:1.5px solid #FED7AA;"
+                    >
+                      <div class="flex-1 min-w-0">
+                        <p class="font-bold text-sm truncate" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ pack.title }}</p>
+                        <p class="text-xs mt-0.5" style="color:#A8A29E; font-family:'Nunito',sans-serif;">
+                          {{ pack.entry_count }} 条目 · {{ pack.like_count }} 赞 · {{ pack.sub_count }} 订阅 · {{ fmtDate(pack.created_at) }}
+                        </p>
+                      </div>
+                      <span class="text-xs px-2 py-0.5 rounded-full border font-bold flex-shrink-0"
+                        style="background:#FFF7ED;color:#78350F;border-color:#FDBA74;">
+                        {{ pack.workshop_name || pack.section || '未知工坊' }}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
           </div>
         </div>
-        <div class="flex flex-col gap-2">
-          <div class="flex items-center gap-2">
-            <span class="text-sm font-semibold" style="color:#78716C;">角色：</span>
-            <span class="text-xs px-2 py-0.5 rounded-full border font-bold" :style="roleStyle(userDetail.user.role)">{{ roleLabel(userDetail.user.role) }}</span>
+      </Transition>
+    </Teleport>
+
+    <!-- ═══ 审批弹窗 ═════════════════════════════════════════════════════ -->
+    <Teleport to="body">
+      <Transition enter-active-class="transition duration-200 ease-out" enter-from-class="opacity-0" enter-to-class="opacity-100"
+        leave-active-class="transition duration-150 ease-in" leave-from-class="opacity-100" leave-to-class="opacity-0">
+        <div v-if="reviewModal" class="fixed inset-0 z-50 flex items-center justify-center p-4" style="background:rgba(0,0,0,0.35);" @click.self="reviewModal=null">
+          <div class="w-full max-w-sm p-6 flex flex-col gap-4" style="background:#FFFBF0; border:2.5px solid #FDBA74; border-radius:20px; box-shadow:6px 6px 0 #FDBA74;">
+            <h3 class="font-bold text-lg" style="font-family:'Fredoka',sans-serif; color:#431407;">
+              {{ reviewModal.action==='approve' ? '通过申请' : '拒绝申请' }}
+            </h3>
+            <p class="text-sm" style="color:#78716C; font-family:'Nunito',sans-serif;">
+              用户：<strong>{{ reviewModal.app.user.username }}</strong>
+            </p>
+            <div>
+              <label class="block text-sm font-bold mb-1.5" style="font-family:'Fredoka',sans-serif; color:#431407;">
+                管理员备注（可选）
+              </label>
+              <textarea v-model="reviewNote" class="input resize-none text-sm" rows="3"
+                :placeholder="reviewModal.action==='approve' ? '欢迎加入…（可不填）' : '请说明拒绝原因…'"
+                style="font-family:'Nunito',sans-serif;"></textarea>
+            </div>
+            <div class="flex gap-3">
+              <button v-if="reviewModal.action==='approve'" class="btn-primary flex-1" :disabled="reviewLoading" @click="submitReview">
+                {{ reviewLoading ? '处理中…' : '确认通过' }}
+              </button>
+              <button v-else class="btn-danger flex-1" :disabled="reviewLoading" @click="submitReview">
+                {{ reviewLoading ? '处理中…' : '确认拒绝' }}
+              </button>
+              <button class="btn-secondary flex-1" @click="reviewModal=null">取消</button>
+            </div>
           </div>
-          <div class="flex items-center gap-2">
-            <span class="text-sm font-semibold" style="color:#78716C;">状态：</span>
-            <span v-if="userDetail.user.is_banned" class="text-xs px-2 py-0.5 rounded-full font-bold" style="background:#FEE2E2;color:#991B1B;border:1px solid #FCA5A5;">已封禁</span>
-            <span v-else class="text-xs px-2 py-0.5 rounded-full font-bold" style="background:#DCFCE7;color:#14532D;border:1px solid #22C55E;">正常</span>
-          </div>
-          <p class="text-sm" style="color:#78716C;">注册时间：{{ fmtDate(userDetail.user.created_at) }}</p>
-          <p class="text-sm" style="color:#78716C;">模组数量：{{ userDetail.pack_count || 0 }}</p>
         </div>
-        <div class="flex flex-wrap gap-2 mt-2">
-          <button v-if="userDetail.user.role !== 'creator'" class="btn-secondary text-xs" @click="changeRole(userDetail.user.id, 'creator'); userDetail = null;">设为创作者</button>
-          <button v-if="userDetail.user.role === 'creator'" class="btn-secondary text-xs" @click="changeRole(userDetail.user.id, 'user'); userDetail = null;">取消创作者</button>
-          <button v-if="userDetail.user.role !== 'admin'" class="btn-secondary text-xs" @click="changeRole(userDetail.user.id, 'admin'); userDetail = null;">设为管理员</button>
-          <button v-if="!userDetail.user.is_banned" class="btn-danger text-xs" @click="changeBanStatus(userDetail.user.id, true, userDetail.user.username); userDetail = null;">封禁用户</button>
-          <button v-else class="btn-secondary text-xs" @click="changeBanStatus(userDetail.user.id, false, userDetail.user.username); userDetail = null;">解封用户</button>
-          <button class="btn-danger text-xs" @click="deleteUser(userDetail.user.id, userDetail.user.username); userDetail = null;">删除用户</button>
-        </div>
-      </div>
-    </div>
+      </Transition>
+    </Teleport>
+
   </div>
 </template>
 

@@ -105,7 +105,6 @@ const discordStrategy = new DiscordStrategy(
 if (proxyUrl) {
   const agent = new HttpsProxyAgent(proxyUrl);
   discordStrategy._oauth2.setAgent(agent);
-  console.log(`[Proxy] Using HTTP proxy: ${proxyUrl}`);
 }
 
 passport.use(discordStrategy);
@@ -158,7 +157,5 @@ app.use((err, req, res, next) => {
 // ─── 启动 ─────────────────────────────────────────────────────────
 const PORT = parseInt(process.env.PORT) || 3000;
 app.listen(PORT, () => {
-  console.log(`[Server] Running on port ${PORT} (${process.env.NODE_ENV || 'development'})`);
   getDb();
-  console.log('[DB] SQLite initialized');
 });
