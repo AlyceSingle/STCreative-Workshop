@@ -8,12 +8,12 @@ Coding-agent instructions for this repository. Read this file in full before mak
 
 A SillyTavern worldbook workshop platform with Discord OAuth2 login. Users browse/subscribe to worldbook entry packs; subscriptions are injected directly into SillyTavern via a companion extension.
 
-| Layer     | Stack |
-|-----------|-------|
-| Backend   | Node.js 20, Express 5, better-sqlite3, Passport + passport-discord |
-| Frontend  | Vue 3 (`<script setup>`), Vite 8, Pinia 3, Vue Router 4, Tailwind CSS v4 |
-| Database  | SQLite (WAL mode) — auto-created at `backend/db/stories.db` |
-| Auth      | Discord OAuth2 only; session cookie (`connect.sid`); no JWT |
+| Layer     | Stack                                                                                                     |
+| --------- | --------------------------------------------------------------------------------------------------------- |
+| Backend   | Node.js 20, Express 5, better-sqlite3, Passport + passport-discord                                        |
+| Frontend  | Vue 3 (`<script setup>`), Vite 8, Pinia 3, Vue Router 4, Tailwind CSS v4                                  |
+| Database  | SQLite (WAL mode) — auto-created at `backend/db/stories.db`                                               |
+| Auth      | Discord OAuth2 only; session cookie (`connect.sid`); no JWT                                               |
 | Extension | `st-extension/` — SillyTavern extension that opens the workshop in a popup and proxies TavernHelper calls |
 
 Not a monorepo — `backend/` and `frontend/` are independent Node projects with separate `package.json` and `node_modules/`. No root-level `package.json`.
@@ -36,6 +36,15 @@ STCreativeWorkshop/
 │   ├── .env.example            # Env var template
 │   └── server.js               # Express entry point
 ├── frontend/src/
+│   ├── api/                   # API 层 — 按路由模块化封装 HTTP 请求
+│   │   ├── auth.js            # /auth/* 认证相关 API
+│   │   ├── stories.js         # /api/stories 故事相关 API（legacy）
+│   │   ├── workshop.js        # /api/workshop 工坊、模组、条目相关 API
+│   │   ├── admin.js           # /api/admin 管理后台 API
+│   │   ├── creator.js         # /api/creator 创作者申请 API
+│   │   └── index.js           # 统一导出所有 API 模块
+│   ├── utils/
+│   │   └── request.js         # Axios 封装，提供 get/post/put/delete/patch 方法
 │   ├── components/             # ConfirmModal, Navbar, WorkshopPackCard, WorkshopEntryCard, StoryCard, TagFilter
 │   ├── config/sections.js      # TAG_GROUPS, DEFAULT_TAGS, localStorage worldbook helpers
 │   ├── router/index.js         # Vue Router; auth guard redirects to { name: 'workshop' }
@@ -85,15 +94,15 @@ To add tests, install `vitest` in the relevant sub-project and add `"test": "vit
 
 ## Environment Variables (`backend/.env`)
 
-| Variable                | Description |
-|-------------------------|-------------|
-| `DISCORD_CLIENT_ID`     | Discord app client ID |
-| `DISCORD_CLIENT_SECRET` | Discord app client secret |
-| `DISCORD_REDIRECT_URI`  | Must match Discord portal exactly |
-| `SESSION_SECRET`        | express-session signing secret |
-| `FRONTEND_URL`          | e.g. `http://localhost:5173` in dev |
-| `PORT`                  | Backend port (default `3000`) |
-| `NODE_ENV`              | `development` or `production` |
+| Variable                | Description                                     |
+| ----------------------- | ----------------------------------------------- |
+| `DISCORD_CLIENT_ID`     | Discord app client ID                           |
+| `DISCORD_CLIENT_SECRET` | Discord app client secret                       |
+| `DISCORD_REDIRECT_URI`  | Must match Discord portal exactly               |
+| `SESSION_SECRET`        | express-session signing secret                  |
+| `FRONTEND_URL`          | e.g. `http://localhost:5173` in dev             |
+| `PORT`                  | Backend port (default `3000`)                   |
+| `NODE_ENV`              | `development` or `production`                   |
 | `HTTP_PROXY`            | Optional: `http://127.0.0.1:10808` for CN proxy |
 
 `HTTP_PROXY` patches passport-discord via `discordStrategy._oauth2.setAgent(agent)` using `https-proxy-agent` v5 (CJS).  
@@ -121,15 +130,15 @@ To add tests, install `vitest` in the relevant sub-project and add `"test": "vit
 - Import order inside `<script setup>`: Vue core → vue-router/pinia → local components → stores → config/utils.
 
 ### Naming Conventions
-| Thing | Convention | Example |
-|-------|------------|---------|
-| Vue components | PascalCase | `WorkshopPackCard.vue` |
-| Vue views | PascalCase + `View` suffix | `HomeView.vue` |
-| Pinia stores | camelCase file + `use*Store` export | `useWorkshopStore` |
-| Backend route files | camelCase | `workshop.js` |
-| DB columns | snake_case | `author_id`, `created_at` |
-| JS vars/functions | camelCase | `fetchPacks`, `workshopSlug` |
-| Constants | UPPER_SNAKE_CASE | `TAG_GROUPS`, `PORT` |
+| Thing               | Convention                          | Example                      |
+| ------------------- | ----------------------------------- | ---------------------------- |
+| Vue components      | PascalCase                          | `WorkshopPackCard.vue`       |
+| Vue views           | PascalCase + `View` suffix          | `HomeView.vue`               |
+| Pinia stores        | camelCase file + `use*Store` export | `useWorkshopStore`           |
+| Backend route files | camelCase                           | `workshop.js`                |
+| DB columns          | snake_case                          | `author_id`, `created_at`    |
+| JS vars/functions   | camelCase                           | `fetchPacks`, `workshopSlug` |
+| Constants           | UPPER_SNAKE_CASE                    | `TAG_GROUPS`, `PORT`         |
 
 ### Design Language
 - Background: `#FFFBF0` (cream). Primary: `#F97316` (orange). Danger: `#EF4444`.
@@ -165,6 +174,44 @@ To add tests, install `vitest` in the relevant sub-project and add `"test": "vit
 ### Tags
 - Only preset tags from `TAG_GROUPS` in `config/sections.js` are allowed — no custom input.
 - `DEFAULT_TAGS` is the flat array for validation or legacy use.
+
+### API Layer Architecture
+前端 API 层位于 `src/api/`，按后端路由模块化组织：
+
+```
+src/api/
+├── auth.js      # 认证：login, logout, fetchMe, checkLogin
+├── stories.js   # 故事 CRUD（legacy）
+├── workshop.js  # 工坊、模组、条目的所有操作
+├── admin.js     # 管理后台：用户管理、申请审核、工坊审批
+├── creator.js   # 创作者申请状态查询和提交
+└── index.js     # 统一导出
+```
+
+**使用规范：**
+- 所有 HTTP 请求必须通过 `src/api/` 模块，禁止在 views/stores 中直接使用 `fetch` 或 `axios`。
+- `src/utils/request.js` 封装 Axios，提供 `get/post/put/delete/patch` 方法，自动处理错误响应。
+- Store 调用 API 方法，View 调用 Store action 或直接调用 API（简单场景）。
+- API 方法返回后端响应数据（已解析 JSON），错误时抛出带有 `message` 属性的 Error 对象。
+
+**示例：**
+```javascript
+// store/workshop.js
+import workshopApi from '@/api/workshop'
+
+async function fetchPacks(page, options) {
+  packsLoading.value = true
+  try {
+    const json = await workshopApi.fetchPacks(page, options)
+    packs.value = json.packs
+    pagination.value = json.pagination
+  } catch (err) {
+    error.value = err.message || '获取模组列表失败'
+  } finally {
+    packsLoading.value = false
+  }
+}
+```
 
 ---
 

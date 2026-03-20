@@ -2,11 +2,12 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import creatorApi from '@/api/creator'
 
 const router = useRouter()
 const authStore = useAuthStore()
 
-const status = ref(null)       // 后端返回的 { role, application }
+const status = ref(null)
 const loading = ref(true)
 const submitting = ref(false)
 const error = ref('')
@@ -18,10 +19,8 @@ const published_works = ref('')
 async function fetchStatus() {
   loading.value = true
   try {
-    const res = await fetch('/api/creator/status', { credentials: 'include' })
-    if (res.ok) status.value = await res.json()
+    status.value = await creatorApi.fetchStatus()
   } catch {
-    // 忽略
   } finally {
     loading.value = false
   }
@@ -44,25 +43,11 @@ async function submitApply() {
   }
   submitting.value = true
   try {
-    const res = await fetch('/api/creator/apply', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        reason: reason.value.trim(),
-        platform: platform.value,
-        published_works: published_works.value.trim(),
-      }),
-    })
-    const data = await res.json()
-    if (!res.ok) {
-      error.value = data.error || '提交失败，请稍后再试'
-    } else {
-      success.value = data.message || '申请已提交！'
-      await fetchStatus()
-    }
-  } catch {
-    error.value = '网络错误，请稍后再试'
+    const data = await creatorApi.submitApply(reason.value, platform.value, published_works.value)
+    success.value = data.message || '申请已提交！'
+    await fetchStatus()
+  } catch (err) {
+    error.value = err.message || err || '提交失败，请稍后再试'
   } finally {
     submitting.value = false
   }

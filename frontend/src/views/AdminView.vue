@@ -1,11 +1,10 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import adminApi from '@/api/admin'
 
 const router = useRouter()
 
-
-// ── 管理员登录状态 ────────────────────────────────────────────────────
 const adminLoggedIn = ref(false)
 const loginForm = ref({ username: '', password: '' })
 const loginError = ref('')
@@ -13,8 +12,8 @@ const loginLoading = ref(false)
 
 async function checkLogin() {
   try {
-    const res = await fetch('/api/admin/me', { credentials: 'include' })
-    adminLoggedIn.value = res.ok
+    await adminApi.checkLogin()
+    adminLoggedIn.value = true
   } catch {
     adminLoggedIn.value = false
   }
@@ -24,33 +23,22 @@ async function doLogin() {
   loginError.value = ''
   loginLoading.value = true
   try {
-    const res = await fetch('/api/admin/login', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(loginForm.value),
-    })
-    const data = await res.json()
-    if (res.ok) {
-      adminLoggedIn.value = true
-      activeTab.value = 'applications'
-      loadApplications()
-    } else {
-      loginError.value = data.error || '登录失败'
-    }
-  } catch {
-    loginError.value = '网络错误，请稍后再试'
+    await adminApi.login(loginForm.value.username, loginForm.value.password)
+    adminLoggedIn.value = true
+    activeTab.value = 'applications'
+    loadApplications()
+  } catch (err) {
+    loginError.value = err.message || err || '登录失败'
   } finally {
     loginLoading.value = false
   }
 }
 
 async function doLogout() {
-  await fetch('/api/admin/logout', { method: 'POST', credentials: 'include' })
+  await adminApi.logout()
   adminLoggedIn.value = false
 }
 
-// ── Tab 切换 ──────────────────────────────────────────────────────────
 const activeTab = ref('applications')
 
 function switchTab(tab) {
@@ -62,19 +50,17 @@ function switchTab(tab) {
   else if (tab === 'workshop-manage') loadAllWorkshops()
 }
 
-// ── 申请管理 ──────────────────────────────────────────────────────────
 const applications = ref([])
 const appFilter = ref('pending')
 const appLoading = ref(false)
-const reviewModal = ref(null)  // { app, action }
+const reviewModal = ref(null)
 const reviewNote = ref('')
 const reviewLoading = ref(false)
 
 async function loadApplications() {
   appLoading.value = true
   try {
-    const res = await fetch(`/api/admin/applications?status=${appFilter.value}`, { credentials: 'include' })
-    const data = await res.json()
+    const data = await adminApi.fetchApplications(appFilter.value)
     applications.value = data.data || []
   } catch {
     applications.value = []
@@ -92,22 +78,14 @@ async function submitReview() {
   if (!reviewModal.value) return
   reviewLoading.value = true
   try {
-    const res = await fetch(`/api/admin/applications/${reviewModal.value.app.id}`, {
-      method: 'PUT',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: reviewModal.value.action, note: reviewNote.value }),
-    })
-    if (res.ok) {
-      reviewModal.value = null
-      await loadApplications()
-    }
+    await adminApi.reviewApplication(reviewModal.value.app.id, reviewModal.value.action, reviewNote.value)
+    reviewModal.value = null
+    await loadApplications()
   } finally {
     reviewLoading.value = false
   }
 }
 
-// ── 用户管理 ──────────────────────────────────────────────────────────
 const users = ref([])
 const userPage = ref(1)
 const userPagination = ref({})
@@ -118,9 +96,7 @@ async function loadUsers(page = 1) {
   usersLoading.value = true
   userPage.value = page
   try {
-    const q = userQuery.value ? `&q=${encodeURIComponent(userQuery.value)}` : ''
-    const res = await fetch(`/api/admin/users?page=${page}&limit=20${q}`, { credentials: 'include' })
-    const data = await res.json()
+    const data = await adminApi.fetchUsers(page, userQuery.value)
     users.value = data.data || []
     userPagination.value = data.pagination || {}
   } catch {
@@ -132,34 +108,23 @@ async function loadUsers(page = 1) {
 
 async function changeRole(userId, role) {
   if (!confirm(`确认将此用户角色改为「${roleLabel(role)}」？`)) return
-  await fetch(`/api/admin/users/${userId}/role`, {
-    method: 'PUT',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ role }),
-  })
+  await adminApi.changeUserRole(userId, role)
   await loadUsers(userPage.value)
 }
 
 async function deleteUser(userId, username) {
   if (!confirm(`确认删除用户「${username}」？此操作不可恢复，其所有模组也将被删除。`)) return
-  await fetch(`/api/admin/users/${userId}`, { method: 'DELETE', credentials: 'include' })
+  await adminApi.deleteUser(userId)
   await loadUsers(userPage.value)
 }
 
 async function changeBanStatus(userId, isBanned, username) {
   const action = isBanned ? '封禁' : '解封'
   if (!confirm(`确认${action}用户「${username}」？`)) return
-  await fetch(`/api/admin/users/${userId}/ban`, {
-    method: 'PUT',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ is_banned: isBanned ? 1 : 0 }),
-  })
+  await adminApi.changeBanStatus(userId, isBanned)
   await loadUsers(userPage.value)
 }
 
-// ── 模组管理 ──────────────────────────────────────────────────────────
 const packs = ref([])
 const packPage = ref(1)
 const packPagination = ref({})
@@ -170,9 +135,7 @@ async function loadPacks(page = 1) {
   packsLoading.value = true
   packPage.value = page
   try {
-    const q = packQuery.value ? `&q=${encodeURIComponent(packQuery.value)}` : ''
-    const res = await fetch(`/api/admin/packs?page=${page}&limit=20${q}`, { credentials: 'include' })
-    const data = await res.json()
+    const data = await adminApi.fetchPacks(page, packQuery.value)
     packs.value = data.data || []
     packPagination.value = data.pagination || {}
   } catch {
@@ -184,11 +147,10 @@ async function loadPacks(page = 1) {
 
 async function deletePack(packId, title) {
   if (!confirm(`确认删除模组「${title}」？`)) return
-  await fetch(`/api/admin/packs/${packId}`, { method: 'DELETE', credentials: 'include' })
+  await adminApi.deletePack(packId)
   await loadPacks(packPage.value)
 }
 
-// ── 工坊申请管理 ──────────────────────────────────────────────────────
 const workshopApps = ref([])
 const workshopAppFilter = ref('pending')
 const workshopAppsLoading = ref(false)
@@ -196,8 +158,7 @@ const workshopAppsLoading = ref(false)
 async function loadWorkshopApps() {
   workshopAppsLoading.value = true
   try {
-    const res = await fetch(`/api/admin/workshops?status=${workshopAppFilter.value}`, { credentials: 'include' })
-    const data = await res.json()
+    const data = await adminApi.fetchWorkshopApplications(workshopAppFilter.value)
     workshopApps.value = data.data || []
   } catch {
     workshopApps.value = []
@@ -208,25 +169,23 @@ async function loadWorkshopApps() {
 
 async function approveWorkshop(id) {
   if (!confirm('确认通过该工坊申请？')) return
-  await fetch(`/api/admin/workshops/${id}/approve`, { method: 'POST', credentials: 'include' })
+  await adminApi.approveWorkshop(id)
   await loadWorkshopApps()
 }
 
 async function rejectWorkshop(id) {
   if (!confirm('确认拒绝该工坊申请？')) return
-  await fetch(`/api/admin/workshops/${id}/reject`, { method: 'POST', credentials: 'include' })
+  await adminApi.rejectWorkshop(id)
   await loadWorkshopApps()
 }
 
-// ── 工坊管理 ──────────────────────────────────────────────────────────
 const allWorkshops = ref([])
 const allWorkshopsLoading = ref(false)
 
 async function loadAllWorkshops() {
   allWorkshopsLoading.value = true
   try {
-    const res = await fetch('/api/admin/workshops?status=all', { credentials: 'include' })
-    const data = await res.json()
+    const data = await adminApi.fetchAllWorkshops()
     allWorkshops.value = data.data || []
   } catch {
     allWorkshops.value = []
@@ -237,21 +196,19 @@ async function loadAllWorkshops() {
 
 async function deleteWorkshop(id, name) {
   if (!confirm(`确认删除工坊「${name}」？其下所有模组将失去所属工坊关联。`)) return
-  await fetch(`/api/admin/workshops/${id}`, { method: 'DELETE', credentials: 'include' })
+  await adminApi.deleteWorkshop(id)
   await loadAllWorkshops()
 }
 
-// ── 用户详情弹窗 ──────────────────────────────────────────────────────
-const userDetail = ref(null)        // null = 关闭；对象 = 展示详情
+const userDetail = ref(null)
 const userDetailLoading = ref(false)
 
 async function loadUserDetail(userId) {
   userDetailLoading.value = true
-  userDetail.value = { loading: true }  // 先打开弹窗显示加载态
+  userDetail.value = { loading: true }
   try {
-    const res = await fetch(`/api/admin/users/${userId}/detail`, { credentials: 'include' })
-    const data = await res.json()
-    if (res.ok) {
+    const data = await adminApi.fetchUserDetail(userId)
+    if (data) {
       userDetail.value = data.data
     } else {
       userDetail.value = null
@@ -263,7 +220,6 @@ async function loadUserDetail(userId) {
   }
 }
 
-// ── 辅助 ──────────────────────────────────────────────────────────────
 const STATUS_MAP = { pending: '待审核', approved: '已通过', rejected: '已拒绝' }
 const STATUS_COLOR = {
   pending:  'background:#FEF9C3; color:#854D0E; border-color:#EAB308;',
@@ -296,7 +252,6 @@ onMounted(async () => {
 <template>
   <div class="page-container py-8 max-w-5xl">
 
-    <!-- ═══ 未登录：显示登录表单 ═══════════════════════════════════════ -->
     <div v-if="!adminLoggedIn" class="max-w-sm mx-auto mt-16">
       <div class="card p-8 flex flex-col gap-5">
         <div class="text-center">
@@ -319,15 +274,12 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- ═══ 已登录：管理后台 ════════════════════════════════════════════ -->
     <div v-else>
-      <!-- 顶栏 -->
       <div class="flex items-center justify-between mb-6 flex-wrap gap-3">
         <h1 class="text-2xl font-bold" style="font-family:'Fredoka',sans-serif; color:#9A3412;">管理后台</h1>
         <button class="btn-secondary text-sm" @click="doLogout">退出登录</button>
       </div>
 
-      <!-- Tab 导航 -->
       <div class="flex gap-2 mb-6 flex-wrap">
         <button v-for="t in [{k:'applications',l:'申请管理'},{k:'workshops',l:'工坊申请'},{k:'workshop-manage',l:'工坊管理'},{k:'users',l:'用户管理'},{k:'packs',l:'模组管理'}]" :key="t.k"
           class="px-5 py-2 rounded-full font-bold text-sm transition-all duration-150"
@@ -337,7 +289,6 @@ onMounted(async () => {
         </button>
       </div>
 
-      <!-- ─── 申请管理 ──────────────────────────────────────────────── -->
       <div v-if="activeTab==='applications'">
         <div class="flex gap-2 mb-4 flex-wrap">
           <button v-for="f in [{k:'pending',l:'待审核'},{k:'approved',l:'已通过'},{k:'rejected',l:'已拒绝'},{k:'all',l:'全部'}]" :key="f.k"
@@ -380,7 +331,6 @@ onMounted(async () => {
         </div>
       </div>
 
-      <!-- ─── 工坊管理 ──────────────────────────────────────────────── -->
       <div v-if="activeTab==='workshop-manage'">
         <div v-if="allWorkshopsLoading" class="flex justify-center py-12">
           <div class="w-8 h-8 rounded-full animate-spin" style="border:3px solid #FED7AA; border-top-color:#F97316;"></div>
@@ -411,7 +361,6 @@ onMounted(async () => {
         </div>
       </div>
 
-      <!-- ─── 用户管理 ──────────────────────────────────────────────── -->
       <div v-if="activeTab==='users'">
         <div class="flex gap-2 mb-4">
           <input v-model="userQuery" class="input text-sm flex-1" placeholder="搜索用户名…" @keyup.enter="loadUsers(1)" />
@@ -428,30 +377,24 @@ onMounted(async () => {
             <img :src="u.avatar ? avatarUrl(u.discord_id, u.avatar) : avatarUrl(u.discord_id, null)"
               class="w-9 h-9 rounded-full object-cover flex-shrink-0" style="border:2px solid #FDBA74;" />
             <div class="flex-1 min-w-0">
-              <p class="font-bold text-sm" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ u.username }}</p>
-              <div class="flex items-center gap-2 mt-0.5">
-                <span v-if="u.is_banned" class="text-xs px-2 py-0.5 rounded-full border font-bold" style="background:#FEE2E2; color:#991B1B; border-color:#FCA5A5;">已封禁</span>
-                <p class="text-xs" style="color:#A8A29E; font-family:'Nunito',sans-serif;">注册于 {{ fmtDate(u.created_at) }}</p>
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="font-bold text-sm" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ u.username }}</span>
+                <span class="text-xs px-2 py-0.5 rounded-full border font-bold" :style="roleStyle(u.role)">{{ roleLabel(u.role) }}</span>
+                <span v-if="u.is_banned" class="text-xs px-2 py-0.5 rounded-full font-bold" style="background:#FEE2E2;color:#991B1B;border:1px solid #FCA5A5;">已封禁</span>
               </div>
-            </div>
-            <span class="text-xs px-2.5 py-1 rounded-full border font-bold" :style="roleStyle(u.role)">{{ roleLabel(u.role) }}</span>
-            <div class="flex gap-1.5 flex-wrap" @click.stop>
-              <button v-if="!u.is_banned" class="text-xs px-3 py-1.5 rounded-full font-bold cursor-pointer transition-all" style="background:#FEF9C3; color:#854D0E; border:1.5px solid #FDE047;" @click="changeBanStatus(u.id, true, u.username)">封禁</button>
-              <button v-else class="text-xs px-3 py-1.5 rounded-full font-bold cursor-pointer transition-all" style="background:#DCFCE7; color:#14532D; border:1.5px solid #22C55E;" @click="changeBanStatus(u.id, false, u.username)">解封</button>
-              <button v-if="u.role!=='creator'" class="text-xs px-3 py-1.5 rounded-full font-bold cursor-pointer transition-all" style="background:#DCFCE7; color:#14532D; border:1.5px solid #22C55E;" @click="changeRole(u.id,'creator')">设为创作者</button>
-              <button v-if="u.role!=='user'" class="text-xs px-3 py-1.5 rounded-full font-bold cursor-pointer transition-all" style="background:#F1F5F9; color:#475569; border:1.5px solid #CBD5E1;" @click="changeRole(u.id,'user')">重置为普通</button>
-              <button class="text-xs px-3 py-1.5 rounded-full font-bold cursor-pointer transition-all" style="background:#FEE2E2; color:#991B1B; border:1.5px solid #FCA5A5;" @click="deleteUser(u.id,u.username)">删除</button>
+              <p class="text-xs mt-0.5" style="color:#A8A29E; font-family:'Nunito',sans-serif;">
+                {{ u.email || '—' }} · 注册于 {{ fmtDate(u.created_at) }} · {{ u.pack_count || 0 }} 个模组
+              </p>
             </div>
           </div>
         </div>
-        <div v-if="userPagination.totalPages>1" class="flex items-center justify-center gap-3 mt-6">
-          <button class="btn-secondary text-sm" :disabled="userPage<=1" @click="loadUsers(userPage-1)">上一页</button>
-          <span class="text-sm" style="color:#A8A29E; font-family:'Nunito',sans-serif;">{{ userPage }} / {{ userPagination.totalPages }}</span>
-          <button class="btn-secondary text-sm" :disabled="userPage>=userPagination.totalPages" @click="loadUsers(userPage+1)">下一页</button>
+        <div v-if="userPagination.totalPages > 1" class="flex justify-center gap-2 mt-6">
+          <button class="btn-secondary text-sm" :disabled="userPage === 1" @click="loadUsers(userPage - 1)">上一页</button>
+          <span class="px-3 py-1.5 text-sm" style="color:#78350F;">{{ userPage }} / {{ userPagination.totalPages }}</span>
+          <button class="btn-secondary text-sm" :disabled="userPage === userPagination.totalPages" @click="loadUsers(userPage + 1)">下一页</button>
         </div>
       </div>
 
-      <!-- ─── 模组管理 ──────────────────────────────────────────────── -->
       <div v-if="activeTab==='packs'">
         <div class="flex gap-2 mb-4">
           <input v-model="packQuery" class="input text-sm flex-1" placeholder="搜索模组标题…" @keyup.enter="loadPacks(1)" />
@@ -461,34 +404,29 @@ onMounted(async () => {
           <div class="w-8 h-8 rounded-full animate-spin" style="border:3px solid #FED7AA; border-top-color:#F97316;"></div>
         </div>
         <div v-else class="flex flex-col gap-3">
-          <div v-for="p in packs" :key="p.id" class="card p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+          <div v-for="p in packs" :key="p.id" class="card p-4 flex flex-col sm:flex-row sm:items-start gap-3">
             <div class="flex-1 min-w-0">
-              <p class="font-bold text-sm truncate" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ p.title }}</p>
+              <div class="flex items-center gap-2 flex-wrap mb-1">
+                <span class="font-bold text-sm" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ p.title }}</span>
+                <span class="text-xs" style="color:#A8A29E; font-family:'Nunito',sans-serif;">{{ p.workshop_name }}</span>
+              </div>
               <p class="text-xs" style="color:#A8A29E; font-family:'Nunito',sans-serif;">
-                {{ p.author.username }} · {{ p.entry_count }} 条目 · {{ p.like_count }} 赞 · {{ p.sub_count }} 订阅 · {{ fmtDate(p.created_at) }}
+                作者：{{ p.author?.username || '—' }} · {{ fmtDate(p.created_at) }} · {{ p.entry_count }} 条目 · {{ p.sub_count }} 订阅
               </p>
             </div>
-            <span class="text-xs px-2.5 py-1 rounded-full border font-bold flex-shrink-0"
-              style="background:#FFF7ED;color:#78350F;border-color:#FDBA74;">
-              {{ p.workshop_name || p.section || '未知工坊' }}
-            </span>
-            <div class="flex gap-2 flex-shrink-0">
-              <button class="btn-secondary text-xs px-3 py-1.5" @click="router.push({ name: 'workshop-pack-edit', params: { packId: p.id } })">编辑</button>
-              <button class="btn-danger text-xs px-3 py-1.5" @click="deletePack(p.id,p.title)">删除</button>
-            </div>
+            <button class="btn-danger text-xs px-3 py-1.5 flex-shrink-0" @click="deletePack(p.id, p.title)">删除</button>
           </div>
         </div>
-        <div v-if="packPagination.totalPages>1" class="flex items-center justify-center gap-3 mt-6">
-          <button class="btn-secondary text-sm" :disabled="packPage<=1" @click="loadPacks(packPage-1)">上一页</button>
-          <span class="text-sm" style="color:#A8A29E; font-family:'Nunito',sans-serif;">{{ packPage }} / {{ packPagination.totalPages }}</span>
-          <button class="btn-secondary text-sm" :disabled="packPage>=packPagination.totalPages" @click="loadPacks(packPage+1)">下一页</button>
+        <div v-if="packPagination.totalPages > 1" class="flex justify-center gap-2 mt-6">
+          <button class="btn-secondary text-sm" :disabled="packPage === 1" @click="loadPacks(packPage - 1)">上一页</button>
+          <span class="px-3 py-1.5 text-sm" style="color:#78350F;">{{ packPage }} / {{ packPagination.totalPages }}</span>
+          <button class="btn-secondary text-sm" :disabled="packPage === packPagination.totalPages" @click="loadPacks(packPage + 1)">下一页</button>
         </div>
       </div>
 
-      <!-- ─── 工坊申请 ──────────────────────────────────────────────── -->
       <div v-if="activeTab==='workshops'">
         <div class="flex gap-2 mb-4 flex-wrap">
-          <button v-for="f in [{k:'pending',l:'待审核'},{k:'active',l:'已通过'},{k:'rejected',l:'已拒绝'},{k:'all',l:'全部'}]" :key="f.k"
+          <button v-for="f in [{k:'pending',l:'待审核'},{k:'active',l:'已上线'},{k:'rejected',l:'已拒绝'},{k:'all',l:'全部'}]" :key="f.k"
             class="px-4 py-1.5 rounded-full text-xs font-bold transition-all"
             :style="workshopAppFilter===f.k ? 'background:#431407; color:white;' : 'background:#FFF7ED; color:#78350F; border:1.5px solid #FDBA74;'"
             @click="workshopAppFilter=f.k; loadWorkshopApps()">
@@ -508,16 +446,13 @@ onMounted(async () => {
                   :style="w.status==='active' ? 'background:#DCFCE7;color:#14532D;border-color:#22C55E;'
                         : w.status==='rejected' ? 'background:#FEE2E2;color:#991B1B;border-color:#FCA5A5;'
                         : 'background:#FEF9C3;color:#854D0E;border-color:#FDE047;'">
-                  {{ w.status==='active' ? '已通过' : w.status==='rejected' ? '已拒绝' : '待审核' }}
+                  {{ w.status==='active' ? '已上线' : w.status==='rejected' ? '已拒绝' : '待审核' }}
                 </span>
               </div>
               <p class="text-xs mb-1" style="color:#A8A29E; font-family:'Nunito',sans-serif;">
-                申请人：{{ w.author ? w.author.username : '内置' }} · 申请于 {{ fmtDate(w.created_at) }}
+                slug: {{ w.slug }} · 申请人：{{ w.author?.username || '内置' }} · {{ fmtDate(w.created_at) }}
               </p>
               <p v-if="w.description" class="text-sm rounded-xl px-3 py-2 mt-1" style="background:#FFFBF0; border:1.5px solid #FED7AA; color:#78350F; font-family:'Nunito',sans-serif; word-break:break-word;">{{ w.description }}</p>
-              <p v-if="w.worldbook" class="text-xs mt-1" style="color:#78716C; font-family:'Nunito',sans-serif;">
-                <span class="font-bold" style="color:#431407;">默认世界书：</span>{{ w.worldbook }}
-              </p>
             </div>
             <div v-if="w.status==='pending'" class="flex gap-2 flex-shrink-0">
               <button class="btn-primary text-xs px-3 py-1.5" @click="approveWorkshop(w.id)">通过</button>
@@ -528,142 +463,57 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- ═══ 用户详情弹窗 ══════════════════════════════════════════════════ -->
-    <Teleport to="body">
-      <Transition enter-active-class="transition duration-200 ease-out" enter-from-class="opacity-0" enter-to-class="opacity-100"
-        leave-active-class="transition duration-150 ease-in" leave-from-class="opacity-100" leave-to-class="opacity-0">
-        <div v-if="userDetail" class="fixed inset-0 z-50 flex items-center justify-center p-4" style="background:rgba(0,0,0,0.35);" @click.self="userDetail=null">
-          <div class="w-full max-w-lg flex flex-col gap-4 max-h-[85vh]" style="background:#FFFBF0; border:2.5px solid #FDBA74; border-radius:20px; box-shadow:6px 6px 0 #FDBA74; overflow:hidden;">
+    <div v-if="reviewModal" class="fixed inset-0 flex items-center justify-center p-4" style="background:rgba(0,0,0,0.4); z-index:100;">
+      <div class="card p-6 w-full max-w-md flex flex-col gap-4">
+        <h3 class="font-bold text-lg" style="font-family:'Fredoka',sans-serif; color:#431407;">
+          {{ reviewModal.action === 'approve' ? '通过申请' : '拒绝申请' }}
+        </h3>
+        <textarea v-model="reviewNote" class="input resize-y" style="min-height:80px;" placeholder="审核备注（可选）"></textarea>
+        <div class="flex gap-3 justify-end">
+          <button class="btn-secondary text-sm" @click="reviewModal = null">取消</button>
+          <button class="btn-primary text-sm" :disabled="reviewLoading" @click="submitReview">
+            {{ reviewLoading ? '处理中…' : '确认' }}
+          </button>
+        </div>
+      </div>
+    </div>
 
-            <!-- 加载态 -->
-            <div v-if="userDetail.loading" class="flex items-center justify-center py-16">
-              <div class="w-8 h-8 rounded-full animate-spin" style="border:3px solid #FED7AA; border-top-color:#F97316;"></div>
-            </div>
-
-            <!-- 内容 -->
-            <template v-else>
-              <!-- 顶部：用户信息 -->
-              <div class="flex items-center gap-4 px-6 pt-6 pb-4" style="border-bottom:1.5px solid #FED7AA;">
-                <img :src="userDetail.user.avatar" class="w-12 h-12 rounded-full object-cover flex-shrink-0" style="border:2px solid #FDBA74;" />
-                <div class="flex-1 min-w-0">
-                  <p class="font-bold text-lg leading-tight truncate" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ userDetail.user.username }}</p>
-                  <div class="flex items-center gap-2 mt-1 flex-wrap">
-                    <span class="text-xs px-2 py-0.5 rounded-full border font-bold" :style="roleStyle(userDetail.user.role)">{{ roleLabel(userDetail.user.role) }}</span>
-                    <span class="text-xs" style="color:#A8A29E; font-family:'Nunito',sans-serif;">注册于 {{ fmtDate(userDetail.user.created_at) }}</span>
-                  </div>
-                </div>
-                <button class="flex-shrink-0 p-1.5 rounded-full transition-colors" style="color:#A8A29E; border:1.5px solid #E7E5E4;" @click="userDetail=null">
-                  <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                  </svg>
-                </button>
-              </div>
-
-              <!-- 统计栏 -->
-              <div class="flex gap-6 px-6 text-center">
-                <div v-if="userDetail.user.role==='creator' || userDetail.user.role==='admin'">
-                  <p class="text-2xl font-bold" style="font-family:'Fredoka',sans-serif; color:#F97316;">{{ userDetail.workshops.length }}</p>
-                  <p class="text-xs" style="color:#A8A29E; font-family:'Nunito',sans-serif;">工坊数</p>
-                </div>
-                <div>
-                  <p class="text-2xl font-bold" style="font-family:'Fredoka',sans-serif; color:#F97316;">{{ userDetail.packs.length }}</p>
-                  <p class="text-xs" style="color:#A8A29E; font-family:'Nunito',sans-serif;">模组数</p>
-                </div>
-                <div>
-                  <p class="text-2xl font-bold" style="font-family:'Fredoka',sans-serif; color:#F97316;">{{ userDetail.entry_count }}</p>
-                  <p class="text-xs" style="color:#A8A29E; font-family:'Nunito',sans-serif;">条目总数</p>
-                </div>
-              </div>
-
-              <!-- 内容区 -->
-              <div class="px-6 pb-6 overflow-y-auto flex-1 flex flex-col gap-5">
-                <!-- 工坊列表：仅创作者/管理员显示 -->
-                <div v-if="userDetail.user.role==='creator' || userDetail.user.role==='admin'">
-                  <p class="text-sm font-bold mb-3" style="font-family:'Fredoka',sans-serif; color:#78350F;">工坊列表</p>
-                  <div v-if="!userDetail.workshops.length" class="text-sm text-center py-4" style="color:#A8A29E; font-family:'Nunito',sans-serif;">暂无工坊</div>
-                  <div v-else class="flex flex-col gap-2">
-                    <div v-for="w in userDetail.workshops" :key="w.id"
-                      class="flex items-center gap-3 px-3 py-2.5 rounded-xl"
-                      style="background:#FFF7ED; border:1.5px solid #FED7AA;"
-                    >
-                      <div class="flex-1 min-w-0">
-                        <p class="font-bold text-sm truncate" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ w.name }}</p>
-                        <p class="text-xs mt-0.5" style="color:#A8A29E; font-family:'Nunito',sans-serif;">
-                          {{ w.slug }} · {{ fmtDate(w.created_at) }}
-                        </p>
-                      </div>
-                      <span class="text-xs px-2 py-0.5 rounded-full border font-bold flex-shrink-0"
-                        :style="w.status==='active' ? 'background:#DCFCE7;color:#14532D;border-color:#22C55E;'
-                              : w.status==='rejected' ? 'background:#FEE2E2;color:#991B1B;border-color:#FCA5A5;'
-                              : 'background:#FEF9C3;color:#854D0E;border-color:#FDE047;'">
-                        {{ w.status==='active' ? '已上线' : w.status==='rejected' ? '已拒绝' : '待审核' }}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- 模组列表 -->
-                <div>
-                  <p class="text-sm font-bold mb-3" style="font-family:'Fredoka',sans-serif; color:#78350F;">模组列表</p>
-                  <div v-if="!userDetail.packs.length" class="text-sm text-center py-4" style="color:#A8A29E; font-family:'Nunito',sans-serif;">暂无模组</div>
-                  <div v-else class="flex flex-col gap-2">
-                    <div v-for="pack in userDetail.packs" :key="pack.id"
-                      class="flex items-center gap-3 px-3 py-2.5 rounded-xl"
-                      style="background:#FFF7ED; border:1.5px solid #FED7AA;"
-                    >
-                      <div class="flex-1 min-w-0">
-                        <p class="font-bold text-sm truncate" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ pack.title }}</p>
-                        <p class="text-xs mt-0.5" style="color:#A8A29E; font-family:'Nunito',sans-serif;">
-                          {{ pack.entry_count }} 条目 · {{ pack.like_count }} 赞 · {{ pack.sub_count }} 订阅 · {{ fmtDate(pack.created_at) }}
-                        </p>
-                      </div>
-                      <span class="text-xs px-2 py-0.5 rounded-full border font-bold flex-shrink-0"
-                        style="background:#FFF7ED;color:#78350F;border-color:#FDBA74;">
-                        {{ pack.workshop_name || pack.section || '未知工坊' }}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </template>
+    <div v-if="userDetail && !userDetail.loading" class="fixed inset-0 flex items-center justify-center p-4" style="background:rgba(0,0,0,0.4); z-index:100;" @click.self="userDetail = null">
+      <div class="card p-6 w-full max-w-lg max-h-[80vh] overflow-y-auto flex flex-col gap-4">
+        <div class="flex items-center justify-between">
+          <h3 class="font-bold text-lg" style="font-family:'Fredoka',sans-serif; color:#431407;">用户详情</h3>
+          <button class="text-sm" style="color:#A8A29E;" @click="userDetail = null">关闭</button>
+        </div>
+        <div class="flex items-center gap-3">
+          <img :src="userDetail.user.avatar ? avatarUrl(userDetail.user.discord_id, userDetail.user.avatar) : avatarUrl(userDetail.user.discord_id, null)"
+            class="w-12 h-12 rounded-full object-cover" style="border:2px solid #FDBA74;" />
+          <div>
+            <p class="font-bold" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ userDetail.user.username }}</p>
+            <p class="text-xs" style="color:#A8A29E;">{{ userDetail.user.email || '—' }}</p>
           </div>
         </div>
-      </Transition>
-    </Teleport>
-
-    <!-- ═══ 审批弹窗 ═════════════════════════════════════════════════════ -->
-    <Teleport to="body">
-      <Transition enter-active-class="transition duration-200 ease-out" enter-from-class="opacity-0" enter-to-class="opacity-100"
-        leave-active-class="transition duration-150 ease-in" leave-from-class="opacity-100" leave-to-class="opacity-0">
-        <div v-if="reviewModal" class="fixed inset-0 z-50 flex items-center justify-center p-4" style="background:rgba(0,0,0,0.35);" @click.self="reviewModal=null">
-          <div class="w-full max-w-sm p-6 flex flex-col gap-4" style="background:#FFFBF0; border:2.5px solid #FDBA74; border-radius:20px; box-shadow:6px 6px 0 #FDBA74;">
-            <h3 class="font-bold text-lg" style="font-family:'Fredoka',sans-serif; color:#431407;">
-              {{ reviewModal.action==='approve' ? '通过申请' : '拒绝申请' }}
-            </h3>
-            <p class="text-sm" style="color:#78716C; font-family:'Nunito',sans-serif;">
-              用户：<strong>{{ reviewModal.app.user.username }}</strong>
-            </p>
-            <div>
-              <label class="block text-sm font-bold mb-1.5" style="font-family:'Fredoka',sans-serif; color:#431407;">
-                管理员备注（可选）
-              </label>
-              <textarea v-model="reviewNote" class="input resize-none text-sm" rows="3"
-                :placeholder="reviewModal.action==='approve' ? '欢迎加入…（可不填）' : '请说明拒绝原因…'"
-                style="font-family:'Nunito',sans-serif;"></textarea>
-            </div>
-            <div class="flex gap-3">
-              <button v-if="reviewModal.action==='approve'" class="btn-primary flex-1" :disabled="reviewLoading" @click="submitReview">
-                {{ reviewLoading ? '处理中…' : '确认通过' }}
-              </button>
-              <button v-else class="btn-danger flex-1" :disabled="reviewLoading" @click="submitReview">
-                {{ reviewLoading ? '处理中…' : '确认拒绝' }}
-              </button>
-              <button class="btn-secondary flex-1" @click="reviewModal=null">取消</button>
-            </div>
+        <div class="flex flex-col gap-2">
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-semibold" style="color:#78716C;">角色：</span>
+            <span class="text-xs px-2 py-0.5 rounded-full border font-bold" :style="roleStyle(userDetail.user.role)">{{ roleLabel(userDetail.user.role) }}</span>
           </div>
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-semibold" style="color:#78716C;">状态：</span>
+            <span v-if="userDetail.user.is_banned" class="text-xs px-2 py-0.5 rounded-full font-bold" style="background:#FEE2E2;color:#991B1B;border:1px solid #FCA5A5;">已封禁</span>
+            <span v-else class="text-xs px-2 py-0.5 rounded-full font-bold" style="background:#DCFCE7;color:#14532D;border:1px solid #22C55E;">正常</span>
+          </div>
+          <p class="text-sm" style="color:#78716C;">注册时间：{{ fmtDate(userDetail.user.created_at) }}</p>
+          <p class="text-sm" style="color:#78716C;">模组数量：{{ userDetail.pack_count || 0 }}</p>
         </div>
-      </Transition>
-    </Teleport>
-
+        <div class="flex flex-wrap gap-2 mt-2">
+          <button v-if="userDetail.user.role !== 'creator'" class="btn-secondary text-xs" @click="changeRole(userDetail.user.id, 'creator'); userDetail = null;">设为创作者</button>
+          <button v-if="userDetail.user.role === 'creator'" class="btn-secondary text-xs" @click="changeRole(userDetail.user.id, 'user'); userDetail = null;">取消创作者</button>
+          <button v-if="userDetail.user.role !== 'admin'" class="btn-secondary text-xs" @click="changeRole(userDetail.user.id, 'admin'); userDetail = null;">设为管理员</button>
+          <button v-if="!userDetail.user.is_banned" class="btn-danger text-xs" @click="changeBanStatus(userDetail.user.id, true, userDetail.user.username); userDetail = null;">封禁用户</button>
+          <button v-else class="btn-secondary text-xs" @click="changeBanStatus(userDetail.user.id, false, userDetail.user.username); userDetail = null;">解封用户</button>
+          <button class="btn-danger text-xs" @click="deleteUser(userDetail.user.id, userDetail.user.username); userDetail = null;">删除用户</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
