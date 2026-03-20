@@ -2,9 +2,9 @@ const express = require('express');
 const router = express.Router();
 const { getDb } = require('../db/init');
 
-// ── 管理员凭据（硬编码） ─────────────────────────────────────────────
-const ADMIN_USERNAME = 'admin';
-const ADMIN_PASSWORD = 'signleadmin';
+// ── 管理员凭据（从环境变量读取，默认值仅供开发） ──────────────────
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'signleadmin';
 
 // ── 管理员鉴权中间件 ──────────────────────────────────────────────────
 function requireAdmin(req, res, next) {
@@ -125,7 +125,7 @@ router.put('/applications/:id', requireAdmin, (req, res) => {
   }
 });
 
-// GET /admin/users — 用户列表，支持分页 ?page=1&limit=20&q=
+// GET /admin/users — 用户列表，支持分页 ?page=1&limit=20&q=&role=&is_banned=
 router.get('/users', requireAdmin, (req, res) => {
   try {
     const db = getDb();
@@ -133,15 +133,40 @@ router.get('/users', requireAdmin, (req, res) => {
     const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
     const offset = (page - 1) * limit;
     const q = req.query.q ? `%${req.query.q}%` : null;
+    const roleFilter = req.query.role || null;
+    const banFilter = req.query.is_banned !== undefined ? parseInt(req.query.is_banned) : null;
 
-    let rows, total;
+    // 构建 WHERE 条件
+    const conditions = [];
+    const params = [];
     if (q) {
-      total = db.prepare(`SELECT COUNT(*) as c FROM users WHERE username LIKE ?`).get(q).c;
-      rows = db.prepare(`SELECT * FROM users WHERE username LIKE ? ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(q, limit, offset);
-    } else {
-      total = db.prepare(`SELECT COUNT(*) as c FROM users`).get().c;
-      rows = db.prepare(`SELECT * FROM users ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(limit, offset);
+      conditions.push('username LIKE ?');
+      params.push(q);
     }
+    if (roleFilter) {
+      conditions.push('role = ?');
+      params.push(roleFilter);
+    }
+    if (banFilter !== null) {
+      conditions.push('is_banned = ?');
+      params.push(banFilter);
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    // 查询总数
+    const total = db.prepare(`SELECT COUNT(*) as c FROM users ${whereClause}`).get(...params).c;
+
+    // 查询用户列表（带统计）
+    const rows = db.prepare(`
+      SELECT u.*,
+             (SELECT COUNT(*) FROM workshop_packs WHERE author_id = u.id) as pack_count,
+             (SELECT COUNT(*) FROM workshop_entries WHERE author_id = u.id) as entry_count
+      FROM users u
+      ${whereClause}
+      ORDER BY created_at DESC
+      LIMIT ? OFFSET ?
+    `).all(...params, limit, offset);
 
     const data = rows.map(u => ({
       id: u.id,
@@ -151,6 +176,8 @@ router.get('/users', requireAdmin, (req, res) => {
       role: u.role || 'user',
       is_banned: !!u.is_banned,
       created_at: u.created_at,
+      pack_count: u.pack_count || 0,
+      entry_count: u.entry_count || 0,
     }));
 
     res.json({
@@ -259,7 +286,7 @@ router.get('/users/:id/detail', requireAdmin, (req, res) => {
   }
 });
 
-// GET /admin/packs — 全部模组列表，支持分页 ?page=1&limit=20&q=
+// GET /admin/packs — 全部模组列表，支持分页 ?page=1&limit=20&q=&workshop_id=&sort=
 router.get('/packs', requireAdmin, (req, res) => {
   try {
     const db = getDb();
@@ -267,30 +294,46 @@ router.get('/packs', requireAdmin, (req, res) => {
     const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
     const offset = (page - 1) * limit;
     const q = req.query.q ? `%${req.query.q}%` : null;
+    const workshopId = req.query.workshop_id ? parseInt(req.query.workshop_id) : null;
+    const sort = req.query.sort || 'latest'; // latest | hot | entries
 
-    let rows, total;
+    // 构建 WHERE 条件
+    const conditions = [];
+    const params = [];
     if (q) {
-      total = db.prepare(`SELECT COUNT(*) as c FROM workshop_packs WHERE title LIKE ?`).get(q).c;
-      rows = db.prepare(`
-        SELECT wp.*, u.username, u.discord_id, u.avatar,
-               w.name AS workshop_name,
-               (SELECT COUNT(*) FROM workshop_entries WHERE pack_id = wp.id) as entry_count
-        FROM workshop_packs wp JOIN users u ON u.id = wp.author_id
-        LEFT JOIN workshops w ON wp.workshop_id = w.id
-        WHERE wp.title LIKE ?
-        ORDER BY wp.created_at DESC LIMIT ? OFFSET ?
-      `).all(q, limit, offset);
-    } else {
-      total = db.prepare(`SELECT COUNT(*) as c FROM workshop_packs`).get().c;
-      rows = db.prepare(`
-        SELECT wp.*, u.username, u.discord_id, u.avatar,
-               w.name AS workshop_name,
-               (SELECT COUNT(*) FROM workshop_entries WHERE pack_id = wp.id) as entry_count
-        FROM workshop_packs wp JOIN users u ON u.id = wp.author_id
-        LEFT JOIN workshops w ON wp.workshop_id = w.id
-        ORDER BY wp.created_at DESC LIMIT ? OFFSET ?
-      `).all(limit, offset);
+      conditions.push('wp.title LIKE ?');
+      params.push(q);
     }
+    if (workshopId) {
+      conditions.push('wp.workshop_id = ?');
+      params.push(workshopId);
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    // 排序规则
+    let orderBy = 'wp.created_at DESC';
+    if (sort === 'hot') {
+      orderBy = '(wp.like_count + wp.sub_count) DESC, wp.created_at DESC';
+    } else if (sort === 'entries') {
+      orderBy = 'entry_count DESC, wp.created_at DESC';
+    }
+
+    // 查询总数
+    const total = db.prepare(`SELECT COUNT(*) as c FROM workshop_packs wp ${whereClause}`).get(...params).c;
+
+    // 查询模组列表
+    const rows = db.prepare(`
+      SELECT wp.*, u.username, u.discord_id, u.avatar,
+             w.name AS workshop_name,
+             (SELECT COUNT(*) FROM workshop_entries WHERE pack_id = wp.id) as entry_count
+      FROM workshop_packs wp
+      JOIN users u ON u.id = wp.author_id
+      LEFT JOIN workshops w ON wp.workshop_id = w.id
+      ${whereClause}
+      ORDER BY ${orderBy}
+      LIMIT ? OFFSET ?
+    `).all(...params, limit, offset);
 
     function avatarUrl(discordId, avatar) {
       if (avatar) return `https://cdn.discordapp.com/avatars/${discordId}/${avatar}.png`;
@@ -303,6 +346,7 @@ router.get('/packs', requireAdmin, (req, res) => {
       description: p.description,
       section: p.section || 'steampunk',
       workshop_name: p.workshop_name || p.section || 'steampunk',
+      workshop_id: p.workshop_id || null,
       like_count: p.like_count,
       sub_count: p.sub_count,
       entry_count: p.entry_count || 0,
@@ -337,28 +381,41 @@ router.delete('/packs/:id', requireAdmin, (req, res) => {
   }
 });
 
-// GET /admin/workshops — 工坊申请列表（支持 ?status=pending/active/rejected/all）
+// GET /admin/workshops — 工坊申请列表（支持 ?status=pending/active/rejected/all&type=all/builtin/user&search=）
 router.get('/workshops', requireAdmin, (req, res) => {
   try {
     const db = getDb();
     const status = req.query.status || 'pending';
-    let rows;
-    if (status === 'all') {
-      rows = db.prepare(`
-        SELECT w.*, u.username, u.discord_id, u.avatar
-        FROM workshops w
-        LEFT JOIN users u ON w.author_id = u.id
-        ORDER BY w.created_at DESC
-      `).all();
-    } else {
-      rows = db.prepare(`
-        SELECT w.*, u.username, u.discord_id, u.avatar
-        FROM workshops w
-        LEFT JOIN users u ON w.author_id = u.id
-        WHERE w.status = ?
-        ORDER BY w.created_at DESC
-      `).all(status);
+    const type = req.query.type || 'all'; // all | builtin | user
+    const search = req.query.search ? `%${req.query.search}%` : null;
+
+    // 构建 WHERE 条件
+    const conditions = [];
+    const params = [];
+
+    if (status !== 'all') {
+      conditions.push('w.status = ?');
+      params.push(status);
     }
+    if (type === 'builtin') {
+      conditions.push('w.author_id IS NULL');
+    } else if (type === 'user') {
+      conditions.push('w.author_id IS NOT NULL');
+    }
+    if (search) {
+      conditions.push('(w.name LIKE ? OR w.slug LIKE ?)');
+      params.push(search, search);
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const rows = db.prepare(`
+      SELECT w.*, u.username, u.discord_id, u.avatar
+      FROM workshops w
+      LEFT JOIN users u ON w.author_id = u.id
+      ${whereClause}
+      ORDER BY w.created_at DESC
+    `).all(...params);
 
     function avatarUrl(discordId, avatar) {
       if (avatar) return `https://cdn.discordapp.com/avatars/${discordId}/${avatar}.png`;
