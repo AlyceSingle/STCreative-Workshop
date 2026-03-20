@@ -11,8 +11,9 @@ const loading = ref(true)
 const submitting = ref(false)
 const error = ref('')
 const success = ref('')
-const reason = ref('')
+const name = ref('')
 const platform = ref('')
+const customPlatform = ref('')
 const published_works = ref('')
 
 async function fetchStatus() {
@@ -30,16 +31,20 @@ async function fetchStatus() {
 async function submitApply() {
   error.value = ''
   success.value = ''
-  if (!reason.value.trim() || reason.value.trim().length < 5) {
-    error.value = '请填写至少 5 个字的申请理由'
+  
+  if (!name.value.trim()) {
+    error.value = '请填写名称'
     return
   }
-  if (!platform.value) {
-    error.value = '请选择发布平台'
+  
+  const finalPlatform = platform.value === '其他' ? customPlatform.value.trim() : platform.value
+  if (!finalPlatform) {
+    error.value = '请选择或填写发布平台'
     return
   }
+  
   if (!published_works.value.trim() || published_works.value.trim().length < 2) {
-    error.value = '请填写至少一个已发布作品名称或链接'
+    error.value = '请填写至少一个已发布作品名称 or 链接'
     return
   }
   submitting.value = true
@@ -49,8 +54,8 @@ async function submitApply() {
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        reason: reason.value.trim(),
-        platform: platform.value,
+        name: name.value.trim(),
+        platform: finalPlatform,
         published_works: published_works.value.trim(),
       }),
     })
@@ -72,11 +77,11 @@ onMounted(fetchStatus)
 </script>
 
 <template>
-  <div class="page-container py-10 max-w-2xl">
+  <div class="page-container py-6 md:py-10 max-w-2xl px-4 md:px-0">
 
     <!-- 返回按钮 -->
     <button
-      class="btn-secondary text-sm mb-6"
+      class="btn-secondary text-sm mb-4 md:mb-6"
       @click="router.back()"
     >
       ← 返回
@@ -94,10 +99,10 @@ onMounted(fetchStatus)
         </svg>
       </div>
       <div>
-        <h1 class="text-2xl font-bold" style="font-family:'Fredoka',sans-serif; color:#9A3412;">
+        <h1 class="text-xl md:text-2xl font-bold" style="font-family:'Fredoka',sans-serif; color:#9A3412;">
           申请成为创作者
         </h1>
-        <p class="text-sm mt-0.5" style="color:#A8A29E; font-family:'Nunito',sans-serif;">
+        <p class="text-xs md:text-sm mt-0.5" style="color:#A8A29E; font-family:'Nunito',sans-serif;">
           创作者可以发布和管理自己的世界书模组
         </p>
       </div>
@@ -164,9 +169,9 @@ onMounted(fetchStatus)
           </div>
         </div>
         <div class="text-sm rounded-xl px-4 py-3" style="background:#FFFBF0; border:1.5px solid #FED7AA; color:#78350F; font-family:'Nunito',sans-serif;">
-          <p><span class="font-semibold">发布平台：</span>{{ status.application.platform || '—' }}</p>
+          <p><span class="font-semibold">名称：</span>{{ status.application.name || '—' }}</p>
+          <p class="mt-1"><span class="font-semibold">发布平台：</span>{{ status.application.platform || '—' }}</p>
           <p class="mt-1"><span class="font-semibold">已发布作品：</span>{{ status.application.published_works || '—' }}</p>
-          <p class="mt-1"><span class="font-semibold">申请理由：</span>{{ status.application.reason }}</p>
         </div>
         <p class="text-xs" style="color:#A8A29E; font-family:'Nunito',sans-serif;">
           管理员将在近期审核，请耐心等待。审核结果将通过角色变更体现。
@@ -188,21 +193,45 @@ onMounted(fetchStatus)
 
         <!-- 申请表单 -->
         <div class="card p-6 flex flex-col gap-4">
+          <!-- 名称 -->
+          <div>
+            <label class="block text-sm font-bold mb-2" style="font-family:'Fredoka',sans-serif; color:#431407;">
+              名称 <span style="color:#EF4444;">*</span>
+            </label>
+            <input
+              v-model="name"
+              type="text"
+              class="input"
+              placeholder="您的发布作品的网名"
+              style="font-family:'Nunito',sans-serif;"
+            />
+          </div>
+
           <!-- 发布平台 -->
           <div>
             <label class="block text-sm font-bold mb-2" style="font-family:'Fredoka',sans-serif; color:#431407;">
               发布平台 <span style="color:#EF4444;">*</span>
             </label>
-            <select
-              v-model="platform"
-              class="input"
-              style="font-family:'Nunito',sans-serif;"
-            >
-              <option value="" disabled>请选择你主要发布作品的平台</option>
-              <option value="类脑">类脑</option>
-              <option value="旅程">旅程</option>
-              <option value="其他平台">其他平台</option>
-            </select>
+            <div class="flex flex-col gap-2">
+              <select
+                v-model="platform"
+                class="input"
+                style="font-family:'Nunito',sans-serif;"
+              >
+                <option value="" disabled>请选择你主要发布作品的平台</option>
+                <option value="类脑">类脑</option>
+                <option value="旅程">旅程</option>
+                <option value="其他">其他</option>
+              </select>
+              <input
+                v-if="platform === '其他'"
+                v-model="customPlatform"
+                type="text"
+                class="input"
+                placeholder="请输入其他平台名称"
+                style="font-family:'Nunito',sans-serif;"
+              />
+            </div>
           </div>
 
           <!-- 已发布作品 -->
@@ -223,29 +252,11 @@ onMounted(fetchStatus)
             </p>
           </div>
 
-          <!-- 申请理由 -->
-          <div>
-            <label class="block text-sm font-bold mb-2" style="font-family:'Fredoka',sans-serif; color:#431407;">
-              申请理由 <span style="color:#EF4444;">*</span>
-            </label>
-            <textarea
-              v-model="reason"
-              class="input resize-none"
-              rows="4"
-              placeholder="介绍一下你自己，为什么想成为创作者？你计划创作哪类内容？（至少 5 字，最多 500 字）"
-              style="font-family:'Nunito',sans-serif;"
-              maxlength="500"
-            ></textarea>
-            <p class="text-xs mt-1 text-right" style="color:#A8A29E; font-family:'Nunito',sans-serif;">
-              {{ reason.length }} / 500
-            </p>
-          </div>
-
           <!-- 须知 -->
           <div class="rounded-xl px-4 py-3 text-xs" style="background:#FFF7ED; border:1.5px dashed #FDBA74; color:#78350F; font-family:'Nunito',sans-serif; line-height:1.7;">
-            <p class="font-bold mb-1">创作者须知</p>
-            <p>・创作者可以发布、编辑和删除自己的世界书模组</p>
-            <p>・请遵守社区规范，不发布违规内容</p>
+            <p class="font-bold mb-1">须知</p>
+            <p>・创作者可以申请自己的工坊</p>
+            <p>・创作者可以管理自己工坊内的模组</p>
             <p>・申请将由管理员人工审核，通常在 1-3 个工作日内处理</p>
           </div>
 

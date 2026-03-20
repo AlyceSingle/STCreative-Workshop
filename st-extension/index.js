@@ -476,7 +476,7 @@ async function handleSubscribe(payload) {
       if (!hasCharacter) {
         const result = { success: false, message: '此资源包含角色正则或开场白，请先进入角色卡再订阅' };
         sendResult('workshop_subscribe_result', result);
-        toastr.warning('请先进入角色卡再订阅', 'ST创意工坊');
+        toastr.warning('请先进入角色卡再订阅', 'ST创意工坊', { timeOut: 5000, extendedTimeOut: 2000 });
         return result;
       }
     }
@@ -619,7 +619,7 @@ async function handleUnsubscribe(payload) {
       if (!hasCharacter) {
         const result = { success: false, message: '此资源包含角色正则或开场白，请先进入角色卡再取消订阅' };
         sendResult('workshop_unsubscribe_result', result);
-        toastr.warning('请先进入角色卡再取消订阅', 'ST创意工坊');
+        toastr.warning('请先进入角色卡再取消订阅', 'ST创意工坊', { timeOut: 5000, extendedTimeOut: 2000 });
         return result;
       }
     }

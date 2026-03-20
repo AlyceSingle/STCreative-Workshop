@@ -17,6 +17,7 @@ export default defineConfig({
   server: {
     host: '0.0.0.0', // 监听所有地址，允许通过 127.0.0.1 访问
     port: 5173,
+    sourcemap: true, 
     proxy: {
       '/api': {
         target: 'http://localhost:3000',

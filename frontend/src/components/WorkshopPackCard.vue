@@ -18,6 +18,16 @@ const authStore = useAuthStore()
 
 const isOwner = computed(() => authStore.user && authStore.user.id === props.pack.author.id)
 
+const entryCountLabel = computed(() => {
+  const p = props.pack
+  const parts = []
+  if (p.count_worldbook > 0) parts.push(`${p.count_worldbook} 世界书`)
+  if (p.count_regex > 0) parts.push(`${p.count_regex} 正则`)
+  if (p.count_greeting > 0) parts.push(`${p.count_greeting} 开场白`)
+  if (parts.length === 0) return `${p.entry_count || 0} 条条目`
+  return parts.join(' · ')
+})
+
 const isSubscribedLocally = computed(() => {
   if (workshopStore.isFromStExtension() && workshopStore.stConnected) {
     return !!workshopStore.subscribedPacksInST[props.pack.id]
@@ -33,6 +43,16 @@ const showSubConfirm = ref(false)
 const targetWorldbookName = ref('')
 // 条目选择（所有条目 ID 的列表，默认全部选中）
 const selectedEntryIds = ref([])
+// 弹窗中显示的条目列表
+const modalEntries = ref([])
+// 用户确认已进入正确角色卡
+const isCharacterConfirmed = ref(false)
+
+// 计算是否有包含风险类型的条目（正则/开场白）被选中
+const hasRiskyContent = computed(() => {
+  const selectedEntries = modalEntries.value.filter(e => selectedEntryIds.value.includes(e.id))
+  return selectedEntries.some(e => e.entry_type === 'regex' || e.entry_type === 'greeting')
+})
 
 async function handleLike(e) {
   e.stopPropagation()
@@ -70,13 +90,22 @@ async function handleSubscribe(e) {
     if (fullPack) packData = fullPack
   }
   
+  // 初始化弹窗条目列表
+  modalEntries.value = packData.entries || []
+  
   // 初始化条目选择列表（默认全选）
-  selectedEntryIds.value = (packData.entries || []).map(e => e.id)
+  selectedEntryIds.value = modalEntries.value.map(e => e.id)
+  
+  // 重置确认状态
+  isCharacterConfirmed.value = false
   
   showSubConfirm.value = true
 }
 
 async function confirmSubscribe() {
+  // 如果有风险内容且未确认，则拦截（双重保险，UI 上应已禁用按钮）
+  if (hasRiskyContent.value && !isCharacterConfirmed.value) return
+
   showSubConfirm.value = false
   // 如果用户修改了世界书名称，更新 store 中的状态
   if (targetWorldbookName.value.trim()) {
@@ -150,7 +179,7 @@ function goToDetail() {
     <div class="flex items-center justify-between mt-1 flex-wrap gap-2">
       <!-- 条目数 -->
       <span class="text-xs" style="color: #A8A29E; font-family: 'Nunito', sans-serif;">
-        {{ pack.entry_count }} 条条目
+        {{ entryCountLabel }}
       </span>
 
       <!-- 点赞 + 订阅按钮 -->
@@ -195,13 +224,29 @@ function goToDetail() {
     title="订阅模组"
     confirm-text="确认订阅"
     cancel-text="取消"
+    :confirm-disabled="hasRiskyContent && !isCharacterConfirmed"
     @confirm="confirmSubscribe"
     @cancel="cancelSubscribe"
   >
     <div class="flex flex-col gap-4">
       <p v-html="`确定要订阅「<strong>${pack.title}</strong>」吗？`"></p>
+
+      <!-- 风险提示与确认 -->
+      <div v-if="hasRiskyContent" class="flex flex-col gap-2 p-3 rounded-xl bg-orange-50 border border-orange-200">
+        <div class="flex items-start gap-2">
+          <span class="text-lg leading-none">⚠️</span>
+          <div class="text-xs text-orange-800">
+            <p class="font-bold mb-1">注意：此订阅包含正则脚本或开场白。</p>
+            <p>这些内容会直接关联到当前选中的角色卡。如果当前未进入角色卡，或进入了错误的角色卡，可能会导致数据错乱。</p>
+          </div>
+        </div>
+        <label class="flex items-center gap-2 mt-2 pt-2 border-t border-orange-200 cursor-pointer select-none">
+          <input type="checkbox" v-model="isCharacterConfirmed" class="w-4 h-4 text-orange-600 rounded focus:ring-orange-500 accent-orange-600" />
+          <span class="text-xs font-bold text-orange-700">我确认 ST 当前已进入正确的角色卡</span>
+        </label>
+      </div>
       
-      <div v-if="workshopStore.isFromStExtension() && workshopStore.stConnected" class="flex flex-col gap-1.5 p-3 rounded-xl bg-[#F0FDF4] border border-[#DCFCE7]">
+      <div v-if="workshopStore.isFromStExtension() && workshopStore.stConnected && !hasRiskyContent" class="flex flex-col gap-1.5 p-3 rounded-xl bg-[#F0FDF4] border border-[#DCFCE7]">
         <label class="text-[10px] font-bold text-[#16A34A] uppercase tracking-wider">选择目标世界书</label>
         <select 
           v-model="targetWorldbookName"
@@ -226,20 +271,20 @@ function goToDetail() {
       </div>
 
       <!-- 条目选择列表 -->
-      <div v-if="pack.entries && pack.entries.length > 0" class="flex flex-col gap-2 p-3 rounded-xl bg-[#FFFBF0] border border-[#FDBA74]">
+      <div v-if="modalEntries && modalEntries.length > 0" class="flex flex-col gap-2 p-3 rounded-xl bg-[#FFFBF0] border border-[#FDBA74]">
         <div class="flex items-center justify-between">
           <label class="text-[10px] font-bold text-[#78350F] uppercase tracking-wider">选择要插入的条目</label>
           <button 
-            @click.stop="selectedEntryIds = selectedEntryIds.length === pack.entries.length ? [] : pack.entries.map(e => e.id)"
+            @click.stop="selectedEntryIds = selectedEntryIds.length === modalEntries.length ? [] : modalEntries.map(e => e.id)"
             class="text-[10px] font-bold px-2 py-0.5 rounded"
             style="background:#FFF7ED; color:#EA580C; border:1px solid #FDBA74;"
           >
-            {{ selectedEntryIds.length === pack.entries.length ? '取消全选' : '全选' }}
+            {{ selectedEntryIds.length === modalEntries.length ? '取消全选' : '全选' }}
           </button>
         </div>
         <div class="max-h-[200px] overflow-y-auto custom-scrollbar flex flex-col gap-1">
           <label 
-            v-for="entry in pack.entries" 
+            v-for="entry in modalEntries" 
             :key="entry.id"
             class="flex items-start gap-2 p-2 rounded-lg hover:bg-[#FFF7ED] transition-colors cursor-pointer"
             style="border:1px solid transparent;"
@@ -255,12 +300,12 @@ function goToDetail() {
             />
             <div class="flex-1 min-w-0">
               <div class="text-xs font-bold truncate" style="color:#431407;">{{ entry.name }}</div>
-              <div v-if="entry.content" class="text-[10px] line-clamp-1 mt-0.5" style="color:#78716C;">{{ entry.content }}</div>
+              <div v-if="entry.content" class="text-[10px] whitespace-pre-line mt-0.5" style="color:#78716C; white-space:pre-line;">{{ entry.content }}</div>
             </div>
           </label>
         </div>
         <p class="text-[10px] text-[#78350F] opacity-80">
-          已选择 {{ selectedEntryIds.length }} / {{ pack.entries.length }} 条
+          已选择 {{ selectedEntryIds.length }} / {{ modalEntries.length }} 条
         </p>
       </div>
     </div>

@@ -376,8 +376,8 @@ const newModRoute = computed(() => ({
     <!-- 动态世界书条目映射 -->
     <div v-if="workshopStore.stConnected && workshopSlug" class="mb-6">
       <div
-        class="card p-3"
-        style="background: #FFFBF0; border: 2px solid #FDBA74; border-radius: 12px;"
+        class="card p-3 !transform-none !rotate-0 !shadow-none"
+        style="background: #FFFBF0; border: 2px solid #FDBA74; border-radius: 12px; box-shadow: 3px 3px 0 #FDBA74;"
       >
         <div class="flex items-center justify-between mb-0 flex-wrap gap-2">
           <div class="flex items-center gap-2">
@@ -515,9 +515,6 @@ const newModRoute = computed(() => ({
                       </span>
                       <span class="truncate text-sm">{{ entry.name || '(未命名)' }}</span>
                     </div>
-                    <div class="text-[10px] opacity-50 font-normal truncate">
-                      {{ entry.content }}
-                    </div>
                   </div>
                   
                   <div class="flex-shrink-0 ml-3">
@@ -545,7 +542,7 @@ const newModRoute = computed(() => ({
       >
         <div
           v-if="showEntryDetailModal"
-          class="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-8"
+          class="fixed inset-0 z-[200] flex items-center justify-center p-4 sm:p-8"
           style="background: rgba(0,0,0,0.5);"
           @click.self="showEntryDetailModal = false"
         >
@@ -579,7 +576,7 @@ const newModRoute = computed(() => ({
             <!-- 模态框内容 -->
             <div class="flex-1 overflow-y-auto p-6 custom-scrollbar">
               <div class="mb-6 p-4 rounded-2xl bg-white border-2 border-[#FDBA74] whitespace-pre-wrap text-sm leading-relaxed" style="color:#431407; font-family:'Nunito',sans-serif;">
-                {{ selectedMappingEntry?.content }}
+                <span style="white-space:pre-line;">{{ selectedMappingEntry?.content }}</span>
               </div>
               
               <!-- 更多元数据 -->

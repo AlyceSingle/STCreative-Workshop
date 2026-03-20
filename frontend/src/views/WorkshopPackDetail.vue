@@ -33,6 +33,52 @@ const entryCountLabel = computed(() => {
 // 批量导入文件输入
 const batchFileInput = ref(null)
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 导出格式转换辅助函数
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * 将系统的 source/destination 格式转换为 SillyTavern 的 placement 数组
+ * placement: 0=user_input, 1=ai_output, 2=slash_command, 3=world_info
+ */
+function sourceToPlacement(source) {
+  const placement = []
+  if (source?.user_input) placement.push(0)
+  if (source?.ai_output) placement.push(1)
+  if (source?.slash_command) placement.push(2)
+  if (source?.world_info) placement.push(3)
+  // 默认至少包含 user_input 和 ai_output
+  if (placement.length === 0) {
+    placement.push(0, 1)
+  }
+  return placement
+}
+
+/**
+ * 将系统 regex 条目转换为 SillyTavern 的 RegexScriptData 格式
+ */
+function convertToRegexScriptData(entry) {
+  const ed = entry.extra_data || {}
+  const source = ed.source || { user_input: true, ai_output: true, slash_command: true, world_info: false }
+  const destination = ed.destination || { display: true, prompt: false }
+  
+  return {
+    id: crypto.randomUUID ? crypto.randomUUID() : `regex_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+    scriptName: entry.name || '',
+    findRegex: ed.find_regex || '',
+    replaceString: entry.content || '',
+    trimStrings: [],
+    placement: sourceToPlacement(source),
+    disabled: !entry.enabled,  // 注意：SillyTavern 使用 disabled 而非 enabled
+    markdownOnly: destination.display && !destination.prompt,
+    promptOnly: destination.prompt && !destination.display,
+    runOnEdit: !!ed.run_on_edit,
+    substituteRegex: 0,
+    minDepth: ed.min_depth ?? null,
+    maxDepth: ed.max_depth ?? null
+  }
+}
+
 // 导出全量/部分 JSON
 function handleBatchExport() {
   if (!pack.value || !pack.value.entries) return
@@ -45,30 +91,41 @@ function handleBatchExport() {
     alert('请至少选择一个条目进行导出')
     return
   }
-
+  
   showExportConfirm.value = false
+  
+  // 特殊处理：单个正则条目直接导出为 RegexScriptData 格式（酒馆兼容）
+  if (entriesToExport.length === 1 && entriesToExport[0].entry_type === 'regex') {
+    const regexData = convertToRegexScriptData(entriesToExport[0])
+    const filename = `${entriesToExport[0].name}.json`
+    
+    const blob = new Blob([JSON.stringify(regexData, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+    return
+  }
   
   const exportData = {
     entries: [],
     regexes: [],
-    greetings: []
+    greetings: []  // 开场白导出为字符串数组（SillyTavern alternate_greetings 格式）
   }
 
   entriesToExport.forEach(entry => {
     if (entry.entry_type === 'regex') {
-      exportData.regexes.push({
-        name: entry.name,
-        enabled: !!entry.enabled,
-        content: entry.content || '',
-        extra_data: entry.extra_data || {}
-      })
+      // 导出为 SillyTavern RegexScriptData 格式
+      exportData.regexes.push(convertToRegexScriptData(entry))
     } else if (entry.entry_type === 'greeting') {
-      exportData.greetings.push({
-        name: entry.name,
-        enabled: !!entry.enabled,
-        content: entry.content || ''
-      })
+      // 开场白只导出内容字符串（SillyTavern alternate_greetings 是字符串数组）
+      if (entry.content) {
+        exportData.greetings.push(entry.content)
+      }
     } else {
+      // 世界书条目保持原有格式（已兼容 ST WorldbookEntry）
       exportData.entries.push({
         name: entry.name,
         enabled: !!entry.enabled,
@@ -130,11 +187,306 @@ function triggerBatchImport() {
   batchFileInput.value?.click()
 }
 
+/**
+ * 将 SillyTavern 的 placement 数组转换为系统的 source 对象
+ * placement: 0=user_input, 1=ai_output, 2=slash_command, 3=world_info
+ */
+function placementToSource(placement) {
+  const source = {
+    user_input: false,
+    ai_output: false,
+    slash_command: false,
+    world_info: false
+  }
+  if (Array.isArray(placement)) {
+    if (placement.includes(0)) source.user_input = true
+    if (placement.includes(1)) source.ai_output = true
+    if (placement.includes(2)) source.slash_command = true
+    if (placement.includes(3)) source.world_info = true
+  }
+  // 默认值
+  if (!source.user_input && !source.ai_output && !source.slash_command && !source.world_info) {
+    source.user_input = true
+    source.ai_output = true
+  }
+  return source
+}
+
+/**
+ * 检测并转换 SillyTavern RegexScriptData 格式为系统格式
+ * 识别特征：有 scriptName、findRegex 字段
+ */
+function convertFromRegexScriptData(entry) {
+  const isSTFormat = 'scriptName' in entry && 'findRegex' in entry
+  if (!isSTFormat) return null
+  
+  const source = placementToSource(entry.placement)
+  const destination = {
+    display: entry.markdownOnly || (!entry.markdownOnly && !entry.promptOnly),
+    prompt: entry.promptOnly || false
+  }
+  
+  return {
+    name: entry.scriptName || '未命名正则',
+    enabled: !entry.disabled,  // 注意：SillyTavern 使用 disabled 而非 enabled
+    content: entry.replaceString || '',
+    entry_type: 'regex',
+    extra_data: {
+      find_regex: entry.findRegex || '',
+      regex_scope: 'global',  // ST 导入的默认为全局
+      source,
+      destination,
+      min_depth: entry.minDepth || null,
+      max_depth: entry.maxDepth || null,
+      run_on_edit: !!entry.runOnEdit
+    }
+  }
+}
+
+/**
+ * ST 世界书 position 数字到系统 position_type 的映射
+ */
+const ST_POSITION_MAP = {
+  0: 'before_character_definition',   // Before Char Defs
+  1: 'after_character_definition',    // After Char Defs  
+  2: 'before_example_messages',       // Before Example Messages
+  3: 'after_example_messages',        // After Example Messages
+  4: 'at_depth',                      // At Depth (使用 depth 字段)
+  5: 'before_author_note',            // Before Author's Note
+  6: 'after_author_note',             // After Author's Note
+  7: 'at_depth',                      // Top of AN (特殊)
+  8: 'at_depth',                      // Bottom of AN (特殊)
+  9: 'before_system_prompt',          // Before System Prompt
+  10: 'after_system_prompt'           // After System Prompt
+}
+
+/**
+ * 转换 SillyTavern 世界书条目格式为系统格式
+ * 识别特征：有 comment、key、position（数字）字段
+ */
+function convertFromSTWorldbookEntry(entry) {
+  // 检测是否为 ST 世界书格式
+  const isSTFormat = 'comment' in entry && 'key' in entry && typeof entry.position === 'number'
+  if (!isSTFormat) return null
+  
+  // 确定策略类型
+  let strategyType = 'selective'
+  if (entry.constant) strategyType = 'constant'
+  else if (entry.vectorized) strategyType = 'vectorized'
+  
+  // 确定 selectiveLogic
+  const selectiveLogicMap = {
+    0: 'and_any',   // AND ANY (默认)
+    1: 'not_all',   // NOT ALL
+    2: 'not_any',   // NOT ANY
+    3: 'and_all'    // AND ALL
+  }
+  
+  return {
+    name: entry.comment || '未命名条目',
+    enabled: !entry.disable,  // 注意：ST 使用 disable 不是 disabled
+    content: entry.content || '',
+    entry_type: 'worldbook',
+    strategy_type: strategyType,
+    keys: Array.isArray(entry.key) ? entry.key : [],
+    keys_secondary: Array.isArray(entry.keysecondary) ? entry.keysecondary : [],
+    keys_secondary_logic: selectiveLogicMap[entry.selectiveLogic] || 'and_any',
+    scan_depth: entry.scanDepth ?? 'same_as_global',
+    position_type: ST_POSITION_MAP[entry.position] || 'after_character_definition',
+    position_depth: entry.depth ?? 4,
+    position_order: entry.order ?? 100,
+    position_role: entry.role || 'system',
+    probability: entry.probability ?? 100,
+    recursion_prevent_incoming: !!entry.preventRecursion,
+    recursion_prevent_outgoing: !!entry.excludeRecursion,
+    recursion_delay_until: entry.delayUntilRecursion ? 1 : null,
+    effect_sticky: entry.sticky || null,
+    effect_cooldown: entry.cooldown || null,
+    effect_delay: entry.delay || null
+  }
+}
+
+/**
+ * 检测是否为 ST 世界书文件格式 { entries: { "0": {...}, "1": {...} } }
+ */
+function isSTWorldbookFile(data) {
+  return data && typeof data.entries === 'object' && !Array.isArray(data.entries)
+}
+
+/**
+ * 从 ST 世界书文件提取条目数组
+ */
+function extractSTWorldbookEntries(data) {
+  const entries = []
+  if (!data.entries) return entries
+  
+  // entries 是一个对象，key 是字符串数字 "0", "1", ...
+  const keys = Object.keys(data.entries).sort((a, b) => parseInt(a) - parseInt(b))
+  for (const key of keys) {
+    const entry = data.entries[key]
+    const converted = convertFromSTWorldbookEntry(entry)
+    if (converted) {
+      entries.push(converted)
+    }
+  }
+  return entries
+}
+
+/**
+ * 预处理单个条目，映射到后端期望的格式
+ */
+function preprocessEntry(entry) {
+  const result = {
+    name: entry.name || '未命名条目',
+    enabled: entry.enabled !== undefined ? !!entry.enabled : true,
+    content: entry.content || '',
+    entry_type: entry.entry_type || 'worldbook',
+    extra_data: entry.extra_data || {}
+  }
+
+  if (entry.strategy) {
+    result.strategy_type = entry.strategy.type || 'selective'
+    result.keys = entry.strategy.keys || []
+    if (entry.strategy.keys_secondary) {
+      result.keys_secondary_logic = entry.strategy.keys_secondary.logic || 'and_any'
+      result.keys_secondary = entry.strategy.keys_secondary.keys || []
+    }
+    result.scan_depth = entry.strategy.scan_depth || 'same_as_global'
+  } else {
+    result.strategy_type = entry.strategy_type || 'selective'
+    result.keys = Array.isArray(entry.keys) ? entry.keys : []
+    result.keys_secondary_logic = entry.keys_secondary_logic || 'and_any'
+    result.keys_secondary = Array.isArray(entry.keys_secondary) ? entry.keys_secondary : []
+    result.scan_depth = entry.scan_depth ?? 'same_as_global'
+  }
+
+  if (entry.position) {
+    result.position_type = entry.position.type || 'after_character_definition'
+    result.position_role = entry.position.role || 'system'
+    result.position_depth = entry.position.depth !== undefined ? entry.position.depth : 4
+    result.position_order = entry.position.order !== undefined ? entry.position.order : 100
+  } else {
+    result.position_type = entry.position_type || 'after_character_definition'
+    result.position_role = entry.position_role || 'system'
+    result.position_depth = entry.position_depth !== undefined ? entry.position_depth : 4
+    result.position_order = entry.position_order !== undefined ? entry.position_order : 100
+  }
+
+  result.probability = entry.probability !== undefined ? entry.probability : 100
+
+  if (entry.recursion) {
+    result.recursion_prevent_incoming = !!entry.recursion.prevent_incoming
+    result.recursion_prevent_outgoing = !!entry.recursion.prevent_outgoing
+    result.recursion_delay_until = entry.recursion.delay_until || null
+  } else {
+    result.recursion_prevent_incoming = !!entry.recursion_prevent_incoming
+    result.recursion_prevent_outgoing = !!entry.recursion_prevent_outgoing
+    result.recursion_delay_until = entry.recursion_delay_until || null
+  }
+
+  if (entry.effect) {
+    result.effect_sticky = entry.effect.sticky || null
+    result.effect_cooldown = entry.effect.cooldown || null
+    result.effect_delay = entry.effect.delay || null
+  } else {
+    result.effect_sticky = entry.effect_sticky || null
+    result.effect_cooldown = entry.effect_cooldown || null
+    result.effect_delay = entry.effect_delay || null
+  }
+
+  return result
+}
+
+/**
+ * 解析导入文件，返回待导入条目列表
+ */
+function parseImportFile(text) {
+  const data = JSON.parse(text)
+  let entriesToImport = []
+  
+  // 检测文件类型并进行相应处理
+  if (Array.isArray(data)) {
+    // 数组格式：可能是 RegexScriptData 数组或普通条目数组
+    for (const item of data) {
+      const regexConverted = convertFromRegexScriptData(item)
+      if (regexConverted) {
+        entriesToImport.push(regexConverted)
+      } else if (typeof item === 'string') {
+        // 字符串数组视为开场白
+        entriesToImport.push({ content: item, entry_type: 'greeting', name: `开场白 ${entriesToImport.length + 1}` })
+      } else {
+        // 尝试 ST 世界书条目格式
+        const wbConverted = convertFromSTWorldbookEntry(item)
+        if (wbConverted) {
+          entriesToImport.push(wbConverted)
+        } else {
+          entriesToImport.push({ ...item, entry_type: item.entry_type || 'worldbook' })
+        }
+      }
+    }
+  } else if (isSTWorldbookFile(data)) {
+    // ST 世界书文件格式 { entries: { "0": {...}, "1": {...} } }
+    entriesToImport = extractSTWorldbookEntries(data)
+  } else if (convertFromRegexScriptData(data)) {
+    // 单个 RegexScriptData 对象
+    entriesToImport.push(convertFromRegexScriptData(data))
+  } else {
+    // 对象格式：包含 entries/regexes/greetings 字段（我们的格式）
+    if (Array.isArray(data.entries)) {
+      for (const entry of data.entries) {
+        const wbConverted = convertFromSTWorldbookEntry(entry)
+        if (wbConverted) {
+          entriesToImport.push(wbConverted)
+        } else {
+          entriesToImport.push({ ...entry, entry_type: 'worldbook' })
+        }
+      }
+    }
+    if (Array.isArray(data.regexes)) {
+      for (const regex of data.regexes) {
+        // 尝试转换 SillyTavern RegexScriptData 格式
+        const converted = convertFromRegexScriptData(regex)
+        if (converted) {
+          entriesToImport.push(converted)
+        } else {
+          // 旧格式或已是系统格式
+          entriesToImport.push({ ...regex, entry_type: 'regex' })
+        }
+      }
+    }
+    if (Array.isArray(data.greetings)) {
+      for (const greeting of data.greetings) {
+        if (typeof greeting === 'string') {
+          // SillyTavern alternate_greetings 格式（字符串数组）
+          entriesToImport.push({ content: greeting, entry_type: 'greeting', name: `开场白 ${entriesToImport.length + 1}` })
+        } else {
+          // 旧格式（对象）
+          entriesToImport.push({ ...greeting, entry_type: 'greeting' })
+        }
+      }
+    }
+    // 兼容 SillyTavern 角色卡的 alternate_greetings 字段
+    if (Array.isArray(data.alternate_greetings)) {
+      for (const greeting of data.alternate_greetings) {
+        if (typeof greeting === 'string') {
+          entriesToImport.push({ content: greeting, entry_type: 'greeting', name: `开场白 ${entriesToImport.length + 1}` })
+        }
+      }
+    }
+  }
+  
+  // 预处理所有条目
+  return entriesToImport.map(preprocessEntry)
+}
+
+/**
+ * 处理文件选择，解析后显示预览弹窗
+ */
 async function handleBatchImport(event) {
   const files = Array.from(event.target.files)
   if (!files.length) return
 
-  let successCount = 0
+  let allEntries = []
   let errorCount = 0
 
   for (const file of files) {
@@ -146,103 +498,74 @@ async function handleBatchImport(event) {
         reader.readAsText(file)
       })
 
-      const data = JSON.parse(text)
-      let entriesToImport = []
-      if (Array.isArray(data)) {
-        entriesToImport = data.map(e => ({ ...e, entry_type: e.entry_type || 'worldbook' }))
-      } else {
-        if (Array.isArray(data.entries)) entriesToImport.push(...data.entries.map(e => ({ ...e, entry_type: 'worldbook' })))
-        if (Array.isArray(data.regexes)) entriesToImport.push(...data.regexes.map(e => ({ ...e, entry_type: 'regex' })))
-        if (Array.isArray(data.greetings)) entriesToImport.push(...data.greetings.map(e => ({ ...e, entry_type: 'greeting' })))
-      }
-      
-      // 预处理导入的数据，映射到后端期望的格式
-      const processedEntries = entriesToImport.map(entry => {
-        // 尝试从嵌套结构映射，如果已经是扁平结构则保留
-        const result = {
-          name: entry.name || '未命名条目',
-          enabled: entry.enabled !== undefined ? !!entry.enabled : true,
-          content: entry.content || '',
-          entry_type: entry.entry_type || 'worldbook',
-          extra_data: entry.extra_data || {}
-        }
-
-        if (entry.strategy) {
-          result.strategy_type = entry.strategy.type || 'selective'
-          result.keys = entry.strategy.keys || []
-          if (entry.strategy.keys_secondary) {
-            result.keys_secondary_logic = entry.strategy.keys_secondary.logic || 'and_any'
-            result.keys_secondary = entry.strategy.keys_secondary.keys || []
-          }
-          result.scan_depth = entry.strategy.scan_depth || 'same_as_global'
-        } else {
-          result.strategy_type = entry.strategy_type || 'selective'
-          result.keys = Array.isArray(entry.keys) ? entry.keys : []
-          result.keys_secondary_logic = entry.keys_secondary_logic || 'and_any'
-          result.keys_secondary = Array.isArray(entry.keys_secondary) ? entry.keys_secondary : []
-          result.scan_depth = entry.scan_depth || 'same_as_global'
-        }
-
-        if (entry.position) {
-          result.position_type = entry.position.type || 'after_character_definition'
-          result.position_role = entry.position.role || 'system'
-          result.position_depth = entry.position.depth !== undefined ? entry.position.depth : 4
-          result.position_order = entry.position.order !== undefined ? entry.position.order : 100
-        } else {
-          result.position_type = entry.position_type || 'after_character_definition'
-          result.position_role = entry.position_role || 'system'
-          result.position_depth = entry.position_depth !== undefined ? entry.position_depth : 4
-          result.position_order = entry.position_order !== undefined ? entry.position_order : 100
-        }
-
-        result.probability = entry.probability !== undefined ? entry.probability : 100
-
-        if (entry.recursion) {
-          result.recursion_prevent_incoming = !!entry.recursion.prevent_incoming
-          result.recursion_prevent_outgoing = !!entry.recursion.prevent_outgoing
-          result.recursion_delay_until = entry.recursion.delay_until || null
-        } else {
-          result.recursion_prevent_incoming = !!entry.recursion_prevent_incoming
-          result.recursion_prevent_outgoing = !!entry.recursion_prevent_outgoing
-          result.recursion_delay_until = entry.recursion_delay_until || null
-        }
-
-        if (entry.effect) {
-          result.effect_sticky = entry.effect.sticky || null
-          result.effect_cooldown = entry.effect.cooldown || null
-          result.effect_delay = entry.effect.delay || null
-        } else {
-          result.effect_sticky = entry.effect_sticky || null
-          result.effect_cooldown = entry.effect_cooldown || null
-          result.effect_delay = entry.effect_delay || null
-        }
-
-        return result
-      })
-
-      const ok = await workshopStore.createEntries(packId.value, processedEntries)
-      if (ok) {
-        successCount += processedEntries.length
-      } else {
-        errorCount++
-      }
+      const entries = parseImportFile(text)
+      allEntries.push(...entries)
     } catch (err) {
-      console.error('批量导入单文件失败:', file.name, err)
+      console.error('解析导入文件失败:', file.name, err)
       errorCount++
     }
   }
   
-  if (successCount > 0) {
-    await workshopStore.fetchPack(packId.value) // 重新加载列表
-    workshopStore.stNotification = { 
-      type: 'success', 
-      message: `成功导入 ${successCount} 条条目` + (errorCount > 0 ? `，${errorCount} 个文件失败` : '')
+  // 清除文件输入
+  event.target.value = ''
+  
+  if (allEntries.length === 0) {
+    if (errorCount > 0) {
+      workshopStore.error = `解析失败：无效的 JSON 文件 (${errorCount} 个)`
+    } else {
+      workshopStore.error = '文件中没有找到可导入的条目'
     }
-  } else if (errorCount > 0) {
-    workshopStore.error = `批量导入失败：无效的 JSON 文件 (${errorCount} 个)`
+    return
   }
 
-  event.target.value = ''
+  // 显示预览弹窗
+  pendingImportEntries.value = allEntries
+  importSelectedIds.value = allEntries.map((_, idx) => idx)  // 默认全选
+  showImportPreview.value = true
+}
+
+/**
+ * 确认导入选中的条目
+ */
+async function confirmImport() {
+  if (importSelectedIds.value.length === 0) {
+    workshopStore.error = '请至少选择一个条目进行导入'
+    return
+  }
+
+  importingEntries.value = true
+  
+  try {
+    const selectedEntries = importSelectedIds.value.map(idx => pendingImportEntries.value[idx])
+    const ok = await workshopStore.createEntries(packId.value, selectedEntries)
+    
+    if (ok) {
+      await workshopStore.fetchPack(packId.value)
+      workshopStore.stNotification = { 
+        type: 'success', 
+        message: `成功导入 ${selectedEntries.length} 条条目`
+      }
+      showImportPreview.value = false
+      pendingImportEntries.value = []
+      importSelectedIds.value = []
+    } else {
+      workshopStore.error = '导入失败，请稍后重试'
+    }
+  } catch (err) {
+    console.error('导入条目失败:', err)
+    workshopStore.error = '导入失败：' + (err.message || '未知错误')
+  } finally {
+    importingEntries.value = false
+  }
+}
+
+/**
+ * 取消导入
+ */
+function cancelImport() {
+  showImportPreview.value = false
+  pendingImportEntries.value = []
+  importSelectedIds.value = []
 }
 
 // 判断用户是否可编辑某条目（条目作者本人 或 pack 作者 或 管理员）
@@ -250,6 +573,23 @@ function canEditEntry(entry) {
   if (!authStore.user) return false
   return authStore.user.id === entry.author_id || isOwner.value || isAdmin.value
 }
+
+// ───────────────────────────────────────────────────────────────────
+// 内容放大查看
+// ───────────────────────────────────────────────────────────────────
+const showEntryDetailModal = ref(false)
+const selectedEntry = ref(null)
+
+function openEntryDetail(entry) {
+  selectedEntry.value = entry
+  showEntryDetailModal.value = true
+}
+
+function closeEntryDetail() {
+  showEntryDetailModal.value = false
+  selectedEntry.value = null
+}
+
 const isStEnv = computed(() => workshopStore.isSillyTavernEnv())
 
 const isSubscribedLocally = computed(() => {
@@ -298,8 +638,28 @@ const showExportConfirm = ref(false)
 const targetWorldbookName = ref('')
 // 条目选择（所有条目 ID 的列表，默认全部选中）
 const selectedEntryIds = ref([])
+// 用户确认已进入正确角色卡
+const isCharacterConfirmed = ref(false)
 // 导出条目选择（独立状态，避免与订阅弹窗混淆）
 const exportEntryIds = ref([])
+
+// 导入预览弹窗状态
+const showImportPreview = ref(false)
+const pendingImportEntries = ref([])        // 待导入的条目列表
+const importSelectedIds = ref([])           // 选中要导入的条目索引
+const importingEntries = ref(false)         // 正在导入中
+
+// 分类待导入条目
+const pendingWorldbookEntries = computed(() => pendingImportEntries.value.filter(e => e.entry_type === 'worldbook' || !e.entry_type))
+const pendingRegexEntries = computed(() => pendingImportEntries.value.filter(e => e.entry_type === 'regex'))
+const pendingGreetingEntries = computed(() => pendingImportEntries.value.filter(e => e.entry_type === 'greeting'))
+
+// 计算是否有包含风险类型的条目（正则/开场白）被选中
+const hasRiskyContent = computed(() => {
+  if (!pack.value?.entries) return false
+  const selectedEntries = pack.value.entries.filter(e => selectedEntryIds.value.includes(e.id))
+  return selectedEntries.some(e => e.entry_type === 'regex' || e.entry_type === 'greeting')
+})
 
 async function handleSubscribe() {
   if (!authStore.isLoggedIn) { authStore.loginWithDiscord(); return }
@@ -321,6 +681,9 @@ async function handleSubscribe() {
   // 初始化条目选择列表（默认全选）
   selectedEntryIds.value = (pack.value?.entries || []).map(e => e.id)
   
+  // 重置确认状态
+  isCharacterConfirmed.value = false
+  
   showSubConfirm.value = true
 }
 
@@ -332,6 +695,9 @@ function handleOpenExport() {
 }
 
 async function confirmSubscribe() {
+  // 如果有风险内容且未确认，则拦截
+  if (hasRiskyContent.value && !isCharacterConfirmed.value) return
+
   showSubConfirm.value = false
   // 如果用户修改了世界书名称，更新 store 中的状态
   if (targetWorldbookName.value.trim()) {
@@ -355,7 +721,7 @@ async function handleDeleteEntry(entryId) {
 
 // 策略类型标签
 function strategyLabel(type) {
-  return type === 'constant' ? '🔵 蓝灯（常驻）' : '🟢 绿灯（触发词）'
+  return type === 'constant' ? '🔵 蓝灯' : '🟢 绿灯'
 }
 
 // ST 扩展通知 toast（4.5s 自动消失）
@@ -508,6 +874,77 @@ watch(() => workshopStore.stNotification, (notif) => {
         </div>
       </div>
 
+    <!-- 条目详情模态框 -->
+    <Teleport to="body">
+      <Transition
+        enter-active-class="transition duration-200 ease-out"
+        enter-from-class="opacity-0 scale-95"
+        enter-to-class="opacity-100 scale-100"
+        leave-active-class="transition duration-150 ease-in"
+        leave-from-class="opacity-100 scale-100"
+        leave-to-class="opacity-0 scale-95"
+      >
+        <div
+          v-if="showEntryDetailModal"
+          class="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-8"
+          style="background: rgba(0,0,0,0.5);"
+          @click.self="closeEntryDetail"
+        >
+          <div
+            class="w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden"
+            style="background:#FFFBF0; border:3px solid #FDBA74; border-radius:24px; box-shadow:8px 8px 0 #FDBA74;"
+          >
+            <!-- 模态框页头 -->
+            <div class="p-5 border-b-2 border-dashed border-[#FDBA74] flex items-center justify-between">
+              <div>
+                <h3 class="text-xl font-bold" style="font-family:'Fredoka',sans-serif; color:#9A3412;">
+                  {{ selectedEntry?.name || '未命名条目' }}
+                </h3>
+                <div class="flex gap-3 mt-1 text-xs font-bold" style="color:#A8A29E;">
+                  <span v-if="selectedEntry?.strategy_type" class="uppercase">{{ selectedEntry.strategy_type }} Strategy</span>
+                </div>
+              </div>
+              <button
+                @click="closeEntryDetail"
+                class="w-10 h-10 rounded-full flex items-center justify-center transition-colors cursor-pointer"
+                style="color:#EA580C; border:2px solid #FDBA74; background:#FFF7ED;"
+              >
+                <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+              </button>
+            </div>
+
+            <!-- 模态框内容 -->
+            <div class="flex-1 overflow-y-auto p-6 custom-scrollbar">
+              <div class="mb-6 p-4 rounded-2xl bg-white border-2 border-[#FDBA74] whitespace-pre-wrap text-sm leading-relaxed" style="color:#431407; font-family:'Nunito',sans-serif;">
+                <span style="white-space:pre-line;">{{ selectedEntry?.content }}</span>
+              </div>
+              
+              <!-- 更多元数据 -->
+              <div class="grid grid-cols-2 gap-4">
+                <div class="p-3 rounded-xl bg-[#FFF7ED] border border-[#FDBA74]">
+                  <span class="block text-[10px] text-[#A8A29E] uppercase font-bold">关键词</span>
+                  <div class="flex flex-wrap gap-1.5 mt-1">
+                    <span v-for="key in (selectedEntry?.keys || [])" :key="key" class="tag-badge">{{ key }}</span>
+                    <span v-if="!(selectedEntry?.keys?.length)" class="text-xs text-gray-400 font-bold">(无)</span>
+                  </div>
+                </div>
+                <!-- 次要关键词 -->
+                <div class="p-3 rounded-xl bg-[#FFF7ED] border border-[#FDBA74]">
+                  <span class="block text-[10px] text-[#A8A29E] uppercase font-bold">次要关键词</span>
+                   <div class="flex flex-wrap gap-1.5 mt-1">
+                    <span v-for="key in (selectedEntry?.keys_secondary || [])" :key="key" class="tag-badge" style="background:#EFF6FF; color:#2563EB; border-color:#BFDBFE;">{{ key }}</span>
+                    <span v-if="!(selectedEntry?.keys_secondary?.length)" class="text-xs text-gray-400 font-bold">(无)</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
       <!-- ── 世界书列表 ─────────────────────────────── -->
       <div class="flex items-center justify-between mb-3 mt-4">
         <h2 class="font-bold text-lg" style="font-family:'Fredoka',sans-serif; color:#EA580C;">
@@ -533,9 +970,9 @@ watch(() => workshopStore.stNotification, (notif) => {
       </div>
       <div v-else class="flex flex-col gap-3">
         <div v-for="entry in worldbookEntries" :key="entry.id" class="p-4 flex flex-col gap-2" style="background:white; border:2px solid #FED7AA; border-radius:14px;">
-          <div class="flex items-start justify-between gap-2">
-            <div class="flex items-center gap-2 flex-wrap">
-              <span class="text-xs font-bold px-2 py-0.5 rounded-full" :style="entry.enabled ? 'background:#DCFCE7; color:#16A34A; border:1.5px solid #22C55E;' : 'background:#F3F4F6; color:#9CA3AF; border:1.5px solid #D1D5DB;'">{{ entry.enabled ? '启用' : '禁用' }}</span>
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2">
+              <h3 class="font-bold text-sm" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ entry.name }}</h3>
               <span class="text-xs font-bold px-2 py-0.5 rounded-full" style="background:#FFF7ED; color:#EA580C; border:1.5px solid #FDBA74;">{{ strategyLabel(entry.strategy_type) }}</span>
             </div>
             <div v-if="canEditEntry(entry)" class="flex items-center gap-2 flex-shrink-0">
@@ -543,11 +980,33 @@ watch(() => workshopStore.stNotification, (notif) => {
               <button class="text-xs font-bold px-3 py-1 rounded-full transition-colors" style="color:#EF4444; border:1.5px solid #FECACA; background:#FEF2F2;" @click="handleDeleteEntry(entry.id)">删除</button>
             </div>
           </div>
-          <h3 class="font-bold text-sm" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ entry.name }}</h3>
           <div v-if="entry.keys && entry.keys.length" class="flex flex-wrap gap-1.5">
             <span v-for="key in entry.keys" :key="key" class="tag-badge">{{ key }}</span>
           </div>
-          <p v-if="entry.content" class="text-xs line-clamp-3" style="color:#78716C; font-family:'Nunito',sans-serif; background:#FFFBF0; border-radius:8px; padding:8px; border:1px solid #FED7AA;">{{ entry.content }}</p>
+          <div class="relative group">
+            <p 
+              v-if="entry.content" 
+              class="text-xs line-clamp-3 cursor-pointer hover:bg-orange-50 transition-colors pr-10" 
+              style="color:#78716C; font-family:'Nunito',sans-serif; background:#FFFBF0; border-radius:8px; padding:8px; border:1px solid #FED7AA;"
+              @click="openEntryDetail(entry)"
+              title="点击查看完整内容"
+            >
+              {{ entry.content }}
+            </p>
+            <!-- 放大查看按钮 -->
+            <button 
+              @click="openEntryDetail(entry)"
+              class="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg opacity-40 group-hover:opacity-100 transition-opacity bg-white/50 hover:bg-white border border-[#FED7AA]"
+              title="放大查看"
+            >
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="#EA580C" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="15 3 21 3 21 9"></polyline>
+                <polyline points="9 21 3 21 3 15"></polyline>
+                <line x1="21" y1="3" x2="14" y2="10"></line>
+                <line x1="3" y1="21" x2="10" y2="14"></line>
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -567,21 +1026,40 @@ watch(() => workshopStore.stNotification, (notif) => {
       </div>
       <div v-else class="flex flex-col gap-3">
         <div v-for="entry in regexEntries" :key="entry.id" class="p-4 flex flex-col gap-2" style="background:white; border:2px solid #FED7AA; border-radius:14px;">
-          <div class="flex items-start justify-between gap-2">
-            <div class="flex items-center gap-2 flex-wrap">
-              <span class="text-xs font-bold px-2 py-0.5 rounded-full" :style="entry.enabled ? 'background:#DCFCE7; color:#16A34A; border:1.5px solid #22C55E;' : 'background:#F3F4F6; color:#9CA3AF; border:1.5px solid #D1D5DB;'">{{ entry.enabled ? '启用' : '禁用' }}</span>
-              <span class="text-xs font-bold px-2 py-0.5 rounded-full" style="background:#FFF7ED; color:#EA580C; border:1.5px solid #FDBA74;">酒馆正则</span>
-            </div>
+          <div class="flex items-center justify-between gap-2">
+            <h3 class="font-bold text-sm" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ entry.name }}</h3>
             <div v-if="canEditEntry(entry)" class="flex items-center gap-2 flex-shrink-0">
               <RouterLink :to="{ name: 'workshop-entry-edit', params: { packId: pack.id, entryId: entry.id } }" class="text-xs font-bold px-3 py-1 rounded-full transition-colors" style="color:#EA580C; border:1.5px solid #FDBA74; background:#FFFBF0;">编辑</RouterLink>
               <button class="text-xs font-bold px-3 py-1 rounded-full transition-colors" style="color:#EF4444; border:1.5px solid #FECACA; background:#FEF2F2;" @click="handleDeleteEntry(entry.id)">删除</button>
             </div>
           </div>
-          <h3 class="font-bold text-sm" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ entry.name }}</h3>
-          <div v-if="entry.extra_data && entry.extra_data.find_regex" class="text-xs p-2 rounded-lg" style="background:#1E293B; color:#38BDF8; font-family:monospace; word-break:break-all;">
-            {{ entry.extra_data.find_regex }}
+          <div v-if="entry.extra_data && entry.extra_data.find_regex" class="text-xs p-2 rounded-lg" style="color:#EA580C; font-family:monospace; word-break:break-all; background:#FFFBF0; border:1px solid #FED7AA;">
+          {{ entry.extra_data.find_regex }}
           </div>
-          <p v-if="entry.content" class="text-xs line-clamp-3" style="color:#78716C; font-family:'Nunito',sans-serif; background:#FFFBF0; border-radius:8px; padding:8px; border:1px solid #FED7AA;">{{ entry.content }}</p>
+          <div class="relative group">
+            <p 
+              v-if="entry.content" 
+              class="text-xs line-clamp-3 cursor-pointer hover:bg-orange-50 transition-colors pr-10" 
+              style="color:#78716C; font-family:'Nunito',sans-serif; background:#FFFBF0; border-radius:8px; padding:8px; border:1px solid #FED7AA;"
+              @click="openEntryDetail(entry)"
+              title="点击查看完整内容"
+            >
+              {{ entry.content }}
+            </p>
+            <!-- 放大查看按钮 -->
+            <button 
+              @click="openEntryDetail(entry)"
+              class="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg opacity-40 group-hover:opacity-100 transition-opacity bg-white/50 hover:bg-white border border-[#FED7AA]"
+              title="放大查看"
+            >
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="#EA580C" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="15 3 21 3 21 9"></polyline>
+                <polyline points="9 21 3 21 3 15"></polyline>
+                <line x1="21" y1="3" x2="14" y2="10"></line>
+                <line x1="3" y1="21" x2="10" y2="14"></line>
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -601,18 +1079,37 @@ watch(() => workshopStore.stNotification, (notif) => {
       </div>
       <div v-else class="flex flex-col gap-3">
         <div v-for="entry in greetingEntries" :key="entry.id" class="p-4 flex flex-col gap-2" style="background:white; border:2px solid #FED7AA; border-radius:14px;">
-          <div class="flex items-start justify-between gap-2">
-            <div class="flex items-center gap-2 flex-wrap">
-              <span class="text-xs font-bold px-2 py-0.5 rounded-full" :style="entry.enabled ? 'background:#DCFCE7; color:#16A34A; border:1.5px solid #22C55E;' : 'background:#F3F4F6; color:#9CA3AF; border:1.5px solid #D1D5DB;'">{{ entry.enabled ? '启用' : '禁用' }}</span>
-              <span class="text-xs font-bold px-2 py-0.5 rounded-full" style="background:#FFF7ED; color:#EA580C; border:1.5px solid #FDBA74;">开场白</span>
-            </div>
+          <div class="flex items-center justify-between gap-2">
+            <h3 class="font-bold text-sm" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ entry.name }}</h3>
             <div v-if="canEditEntry(entry)" class="flex items-center gap-2 flex-shrink-0">
               <RouterLink :to="{ name: 'workshop-entry-edit', params: { packId: pack.id, entryId: entry.id } }" class="text-xs font-bold px-3 py-1 rounded-full transition-colors" style="color:#EA580C; border:1.5px solid #FDBA74; background:#FFFBF0;">编辑</RouterLink>
               <button class="text-xs font-bold px-3 py-1 rounded-full transition-colors" style="color:#EF4444; border:1.5px solid #FECACA; background:#FEF2F2;" @click="handleDeleteEntry(entry.id)">删除</button>
             </div>
           </div>
-          <h3 class="font-bold text-sm" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ entry.name }}</h3>
-          <p v-if="entry.content" class="text-xs" style="color:#78716C; font-family:'Nunito',sans-serif; background:#FFFBF0; border-radius:8px; padding:8px; border:1px solid #FED7AA; white-space:pre-wrap;">{{ entry.content }}</p>
+          <div class="relative group">
+            <p 
+              v-if="entry.content" 
+              class="text-xs line-clamp-3 cursor-pointer hover:bg-orange-50 transition-colors pr-10" 
+              style="color:#78716C; font-family:'Nunito',sans-serif; background:#FFFBF0; border-radius:8px; padding:8px; border:1px solid #FED7AA; white-space:pre-wrap;"
+              @click="openEntryDetail(entry)"
+              title="点击查看完整内容"
+            >
+              {{ entry.content }}
+            </p>
+            <!-- 放大查看按钮 -->
+            <button 
+              @click="openEntryDetail(entry)"
+              class="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg opacity-40 group-hover:opacity-100 transition-opacity bg-white/50 hover:bg-white border border-[#FED7AA]"
+              title="放大查看"
+            >
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="#EA580C" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="15 3 21 3 21 9"></polyline>
+                <polyline points="9 21 3 21 3 15"></polyline>
+                <line x1="21" y1="3" x2="14" y2="10"></line>
+                <line x1="3" y1="21" x2="10" y2="14"></line>
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
     </template>
@@ -624,13 +1121,29 @@ watch(() => workshopStore.stNotification, (notif) => {
     title="订阅模组"
     confirm-text="确认订阅"
     cancel-text="取消"
+    :confirm-disabled="hasRiskyContent && !isCharacterConfirmed"
     @confirm="confirmSubscribe"
     @cancel="showSubConfirm = false"
   >
     <div class="flex flex-col gap-4">
       <p v-html="`确定要订阅 <strong>${pack?.title}</strong> 吗？`"></p>
       
-      <div v-if="workshopStore.isFromStExtension() && workshopStore.stConnected" class="flex flex-col gap-1.5 p-3 rounded-xl bg-[#F0FDF4] border border-[#DCFCE7]">
+      <!-- 风险提示与确认 -->
+      <div v-if="hasRiskyContent" class="flex flex-col gap-2 p-3 rounded-xl bg-orange-50 border border-orange-200">
+        <div class="flex items-start gap-2">
+          <span class="text-lg leading-none">⚠️</span>
+          <div class="text-xs text-orange-800">
+            <p class="font-bold mb-1">注意：此订阅包含正则脚本或开场白。</p>
+            <p>这些内容会直接关联到当前选中的角色卡。如果当前未进入角色卡，或进入了错误的角色卡，可能会导致数据错乱。</p>
+          </div>
+        </div>
+        <label class="flex items-center gap-2 mt-2 pt-2 border-t border-orange-200 cursor-pointer select-none">
+          <input type="checkbox" v-model="isCharacterConfirmed" class="w-4 h-4 text-orange-600 rounded focus:ring-orange-500 accent-orange-600" />
+          <span class="text-xs font-bold text-orange-700">我确认 ST 当前已进入正确的角色卡</span>
+        </label>
+      </div>
+      
+      <div v-if="workshopStore.isFromStExtension() && workshopStore.stConnected && !hasRiskyContent" class="flex flex-col gap-1.5 p-3 rounded-xl bg-[#F0FDF4] border border-[#DCFCE7]">
         <label class="text-[10px] font-bold text-[#16A34A] uppercase tracking-wider">选择目标世界书</label>
         <select 
           v-model="targetWorldbookName"
@@ -778,6 +1291,113 @@ watch(() => workshopStore.stNotification, (notif) => {
 
         <p class="text-[10px] text-[#78350F] opacity-80 mt-2 border-t border-[#FED7AA] pt-2">
           已选择 {{ exportEntryIds.length }} / {{ pack.entries.length }} 条
+        </p>
+      </div>
+    </div>
+  </ConfirmModal>
+
+  <!-- 导入预览弹窗 -->
+  <ConfirmModal
+    v-if="showImportPreview"
+    title="导入预览"
+    :confirm-text="importingEntries ? '导入中...' : '确认导入'"
+    cancel-text="取消"
+    :confirm-disabled="importSelectedIds.length === 0 || importingEntries"
+    @confirm="confirmImport"
+    @cancel="cancelImport"
+  >
+    <div class="flex flex-col gap-4">
+      <p>以下是解析到的条目，请选择要导入的内容：</p>
+      
+      <!-- 条目选择列表 -->
+      <div v-if="pendingImportEntries.length > 0" class="flex flex-col gap-3 p-3 rounded-xl bg-[#FFFBF0] border border-[#FDBA74] max-h-[50vh] overflow-y-auto custom-scrollbar">
+        
+        <div class="flex items-center justify-between pb-2 border-b border-[#FED7AA]">
+           <span class="text-xs font-bold text-[#78350F]">选择要导入的条目</span>
+           <button 
+            @click.stop="importSelectedIds = importSelectedIds.length === pendingImportEntries.length ? [] : pendingImportEntries.map((_, idx) => idx)"
+            class="text-[10px] font-bold px-2 py-0.5 rounded"
+            style="background:#FFF7ED; color:#EA580C; border:1px solid #FDBA74;"
+          >
+            {{ importSelectedIds.length === pendingImportEntries.length ? '取消全选' : '全选所有' }}
+          </button>
+        </div>
+
+        <template v-if="pendingWorldbookEntries.length > 0">
+           <label class="text-[10px] font-bold text-[#92400E] uppercase tracking-wider mb-1">世界书条目 ({{ pendingWorldbookEntries.length }})</label>
+           <div class="flex flex-col gap-1 mb-2">
+             <label 
+               v-for="(entry, idx) in pendingImportEntries.filter(e => e.entry_type === 'worldbook' || !e.entry_type)" 
+               :key="idx" 
+               class="flex items-start gap-2 p-2 rounded-lg hover:bg-[#FFF7ED] transition-colors cursor-pointer" 
+               :style="importSelectedIds.includes(pendingImportEntries.indexOf(entry)) ? 'background:#FFF7ED;' : ''"
+             >
+                <input 
+                  type="checkbox" 
+                  :value="pendingImportEntries.indexOf(entry)" 
+                  v-model="importSelectedIds" 
+                  class="mt-0.5 flex-shrink-0" 
+                  style="accent-color:#F97316;" 
+                />
+                <div class="flex-1 min-w-0">
+                    <div class="text-xs font-bold truncate text-[#431407]">{{ entry.name }}</div>
+                    <div v-if="entry.content" class="text-[10px] line-clamp-2 mt-0.5 text-[#78716C]">{{ entry.content }}</div>
+                    <div v-if="entry.keys && entry.keys.length" class="text-[10px] mt-0.5 text-[#9CA3AF]">关键词: {{ entry.keys.join(', ') }}</div>
+                </div>
+             </label>
+           </div>
+        </template>
+
+        <template v-if="pendingRegexEntries.length > 0">
+           <label class="text-[10px] font-bold text-[#92400E] uppercase tracking-wider mb-1 mt-1">酒馆正则 ({{ pendingRegexEntries.length }})</label>
+           <div class="flex flex-col gap-1 mb-2">
+             <label 
+               v-for="(entry, idx) in pendingImportEntries.filter(e => e.entry_type === 'regex')" 
+               :key="idx" 
+               class="flex items-start gap-2 p-2 rounded-lg hover:bg-[#FFF7ED] transition-colors cursor-pointer" 
+               :style="importSelectedIds.includes(pendingImportEntries.indexOf(entry)) ? 'background:#FFF7ED;' : ''"
+             >
+                <input 
+                  type="checkbox" 
+                  :value="pendingImportEntries.indexOf(entry)" 
+                  v-model="importSelectedIds" 
+                  class="mt-0.5 flex-shrink-0" 
+                  style="accent-color:#F97316;" 
+                />
+                <div class="flex-1 min-w-0">
+                    <div class="text-xs font-bold truncate text-[#431407]">{{ entry.name }}</div>
+                    <div v-if="entry.extra_data?.find_regex" class="text-[10px] mt-0.5 text-[#9CA3AF] font-mono truncate">{{ entry.extra_data.find_regex }}</div>
+                </div>
+             </label>
+           </div>
+        </template>
+
+        <template v-if="pendingGreetingEntries.length > 0">
+           <label class="text-[10px] font-bold text-[#92400E] uppercase tracking-wider mb-1 mt-1">开场白 ({{ pendingGreetingEntries.length }})</label>
+           <div class="flex flex-col gap-1 mb-2">
+             <label 
+               v-for="(entry, idx) in pendingImportEntries.filter(e => e.entry_type === 'greeting')" 
+               :key="idx" 
+               class="flex items-start gap-2 p-2 rounded-lg hover:bg-[#FFF7ED] transition-colors cursor-pointer" 
+               :style="importSelectedIds.includes(pendingImportEntries.indexOf(entry)) ? 'background:#FFF7ED;' : ''"
+             >
+                <input 
+                  type="checkbox" 
+                  :value="pendingImportEntries.indexOf(entry)" 
+                  v-model="importSelectedIds" 
+                  class="mt-0.5 flex-shrink-0" 
+                  style="accent-color:#F97316;" 
+                />
+                <div class="flex-1 min-w-0">
+                    <div class="text-xs font-bold truncate text-[#431407]">{{ entry.name }}</div>
+                    <div v-if="entry.content" class="text-[10px] line-clamp-2 mt-0.5 text-[#78716C]">{{ entry.content }}</div>
+                </div>
+             </label>
+           </div>
+        </template>
+
+        <p class="text-[10px] text-[#78350F] opacity-80 mt-2 border-t border-[#FED7AA] pt-2">
+          已选择 {{ importSelectedIds.length }} / {{ pendingImportEntries.length }} 条
         </p>
       </div>
     </div>

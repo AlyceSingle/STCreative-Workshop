@@ -401,7 +401,7 @@ onMounted(async () => {
               <p class="text-xs mb-1" style="color:#A8A29E; font-family:'Nunito',sans-serif;">
                 slug: {{ w.slug }} · 申请人：{{ w.author ? w.author.username : '内置' }} · {{ fmtDate(w.created_at) }}
               </p>
-              <p v-if="w.description" class="text-sm rounded-xl px-3 py-2 mt-1" style="background:#FFFBF0; border:1.5px solid #FED7AA; color:#78350F; font-family:'Nunito',sans-serif; word-break:break-word;">{{ w.description }}</p>
+              <p v-if="w.description" class="text-sm rounded-xl px-3 py-2 mt-1 whitespace-pre-line" style="background:#FFFBF0; border:1.5px solid #FED7AA; color:#78350F; font-family:'Nunito',sans-serif; word-break:break-word; white-space:pre-line;">{{ w.description }}</p>
             </div>
             <div class="flex flex-col gap-2 flex-shrink-0 sm:w-24">
               <button v-if="w.author_id !== null" class="btn-secondary text-xs px-3 py-1.5 w-full text-center" @click="router.push({ name: 'workshop-edit', params: { id: w.id } })">编辑</button>

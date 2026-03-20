@@ -65,7 +65,7 @@ function formatDate(dateStr) {
 </script>
 
 <template>
-  <div class="page-container py-8 max-w-3xl mx-auto">
+  <div class="page-container py-8 mx-auto w-full max-w-3xl md:max-w-5xl lg:max-w-7xl px-4 sm:px-6 lg:px-8">
 
     <!-- 顶部返回按钮 -->
     <div class="mb-6">
@@ -145,7 +145,7 @@ function formatDate(dateStr) {
       </div>
 
       <!-- 订阅列表 -->
-      <div v-else class="flex flex-col gap-3">
+      <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         <div
           v-for="pack in workshopStore.mySubscriptions"
           :key="pack.id"
@@ -188,8 +188,10 @@ function formatDate(dateStr) {
 
           <!-- 底部行：统计 + 取消订阅按钮 -->
           <div class="flex items-center justify-between mt-1 flex-wrap gap-2">
-            <div class="flex items-center gap-3 text-xs" style="color: #A8A29E; font-family: 'Nunito', sans-serif;">
-              <span>{{ pack.entry_count }} 条条目</span>
+            <div class="flex flex-wrap items-center gap-3 text-xs" style="color: #A8A29E; font-family: 'Nunito', sans-serif;">
+              <span v-if="pack.count_worldbook > 0">{{ pack.count_worldbook }} 条条目</span>
+              <span v-if="pack.count_regex > 0">{{ pack.count_regex }} 条正则</span>
+              <span v-if="pack.count_greeting > 0">{{ pack.count_greeting }} 条开场白</span>
               <span>{{ pack.like_count }} 点赞</span>
             </div>
 
@@ -249,7 +251,7 @@ function formatDate(dateStr) {
       </div>
 
       <!-- 列表 -->
-      <div v-else class="flex flex-col gap-3">
+      <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         <div
           v-for="pack in myPacks"
           :key="pack.id"
@@ -273,8 +275,10 @@ function formatDate(dateStr) {
             {{ pack.description }}
           </p>
 
-          <div class="flex items-center gap-3 mt-1 text-xs" style="color: #A8A29E; font-family: 'Nunito', sans-serif;">
-            <span>{{ pack.entry_count }} 条条目</span>
+          <div class="flex flex-wrap items-center gap-3 mt-1 text-xs" style="color: #A8A29E; font-family: 'Nunito', sans-serif;">
+            <span v-if="pack.count_worldbook > 0">{{ pack.count_worldbook }} 条条目</span>
+            <span v-if="pack.count_regex > 0">{{ pack.count_regex }} 条正则</span>
+            <span v-if="pack.count_greeting > 0">{{ pack.count_greeting }} 条开场白</span>
             <span>{{ pack.sub_count }} 订阅</span>
             <span>{{ pack.like_count }} 点赞</span>
           </div>

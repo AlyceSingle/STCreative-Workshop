@@ -140,7 +140,7 @@
           @click.self="showWorkshopModal = false"
         >
           <div
-            class="w-full max-w-md p-6 flex flex-col gap-5"
+            class="w-full max-w-md md:max-w-2xl lg:max-w-4xl p-6 flex flex-col gap-5 transition-all duration-300"
             style="background:#FFFBF0; border:2.5px solid #FDBA74; border-radius:24px; box-shadow:6px 6px 0 #FDBA74;"
           >
             <!-- 标题栏 -->
@@ -182,7 +182,7 @@
             <div v-if="workshopStore.workshopsLoading" class="flex justify-center py-4">
               <div class="w-6 h-6 rounded-full animate-spin" style="border:2px solid #FED7AA; border-top-color:#F97316;"></div>
             </div>
-            <div v-else class="grid grid-cols-2 gap-4">
+            <div v-else class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 max-h-[60vh] overflow-y-auto custom-scrollbar pr-2">
               <RouterLink
                 v-for="w in filteredWorkshops"
                 :key="w.id"
@@ -196,7 +196,7 @@
               </RouterLink>
               <div
                 v-if="!filteredWorkshops.length"
-                class="col-span-2 text-center py-4 text-sm"
+                class="col-span-2 md:col-span-3 lg:col-span-4 text-center py-4 text-sm"
                 style="color:#A8A29E; font-family:'Nunito',sans-serif;"
               >
                 暂无工坊
@@ -283,19 +283,13 @@
           class="text-base mb-2"
           style="font-family: 'Fredoka', sans-serif; color: #92400E; font-weight: 600; letter-spacing: 0.02em;"
         >
-          用文字记录感动 · 每一个故事，都值得被记住
+          我们致力于自由的创作交流分享
         </p>
         <p
           class="text-sm mb-1"
           style="font-family: 'Nunito', sans-serif; color: #78350F;"
         >
-          由 <strong>Single</strong> 制作
-        </p>
-        <p
-          class="text-sm"
-          style="font-family: 'Nunito', sans-serif; color: #A8A29E;"
-        >
-          感谢 <strong style="color: #78716C;">wojwo</strong> 的技术指导与支持
+          由 <strong>Single，wojwo，hajimi987</strong> 制作
         </p>
       </div>
     </div>
