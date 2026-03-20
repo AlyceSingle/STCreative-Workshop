@@ -16,7 +16,8 @@ const SSH_CONFIG = {
 const PATHS = {
   frontendDist: join(__dirname, 'frontend', 'dist'),
   backendDir: join(__dirname, 'backend'),
-  remoteNginxPath: '/usr/share/nginx/html',
+  // remoteNginxPath: '/usr/share/nginx/html',
+  remoteNginxPath: '/usr/local/nginx/html',
   // remoteNginxPath: '/usr/local/nginx/html',
   remoteFrontendName: 'STCreativeWorkshop',
   remoteBackendPath: '/root/st-project',
