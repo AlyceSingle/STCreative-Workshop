@@ -1,8 +1,9 @@
 <script setup>
 import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { useWorkshopStore, authFetch } from '@/stores/workshop'
+import { useWorkshopStore } from '@/stores/workshop'
 import { useAuthStore } from '@/stores/auth'
+import workshopApi from '@/api/workshop'
 
 const router = useRouter()
 const workshopStore = useWorkshopStore()
@@ -29,12 +30,8 @@ onMounted(async () => {
 async function fetchMyPacks() {
   myPacksLoading.value = true
   try {
-    const res = await authFetch(`/api/workshop?author_id=${authStore.user.id}&limit=50`)
-    const json = await res.json()
-    if (res.ok) {
-      // 兼容两种返回格式：json.packs 或 json.data
-      myPacks.value = json.packs || json.data || []
-    }
+    const json = await workshopApi.fetchPacks(1, { authorId: authStore.user.id, limit: 50 })
+    myPacks.value = json.data || []
   } catch (err) {
     console.error('获取发布的模组失败:', err)
   } finally {
@@ -42,19 +39,15 @@ async function fetchMyPacks() {
   }
 }
 
-// 跳转到模组详情
 function goToPack(packId) {
   router.push({ name: 'workshop-pack-detail', params: { packId } })
 }
 
-// 取消订阅
 async function handleUnsubscribe(pack) {
   await workshopStore.toggleSubscribe(pack)
-  // 重新拉取列表，确保显示最新状态
   await workshopStore.fetchMySubscriptions()
 }
 
-// 格式化日期
 function formatDate(dateStr) {
   return new Date(dateStr).toLocaleDateString('zh-CN', {
     year: 'numeric',

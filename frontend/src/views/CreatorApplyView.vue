@@ -2,9 +2,10 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import creatorApi from '@/api/creator'
 
 const router = useRouter()
-const authStore = useAuthStore()
+const authStore = useAuthStore() //TODO：unused？？
 
 const status = ref(null)       // 后端返回的 { role, application }
 const loading = ref(true)
@@ -19,10 +20,8 @@ const published_works = ref('')
 async function fetchStatus() {
   loading.value = true
   try {
-    const res = await fetch('/api/creator/status', { credentials: 'include' })
-    if (res.ok) status.value = await res.json()
+    status.value = await creatorApi.fetchStatus()
   } catch {
-    // 忽略
   } finally {
     loading.value = false
   }
@@ -31,43 +30,33 @@ async function fetchStatus() {
 async function submitApply() {
   error.value = ''
   success.value = ''
-  
+
   if (!name.value.trim()) {
     error.value = '请填写名称'
     return
   }
-  
+
   const finalPlatform = platform.value === '其他' ? customPlatform.value.trim() : platform.value
   if (!finalPlatform) {
     error.value = '请选择或填写发布平台'
     return
   }
-  
+
   if (!published_works.value.trim() || published_works.value.trim().length < 2) {
     error.value = '请填写至少一个已发布作品名称 or 链接'
     return
   }
   submitting.value = true
   try {
-    const res = await fetch('/api/creator/apply', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: name.value.trim(),
-        platform: finalPlatform,
-        published_works: published_works.value.trim(),
-      }),
-    })
-    const data = await res.json()
-    if (!res.ok) {
-      error.value = data.error || '提交失败，请稍后再试'
-    } else {
-      success.value = data.message || '申请已提交！'
-      await fetchStatus()
-    }
-  } catch {
-    error.value = '网络错误，请稍后再试'
+    const data = await creatorApi.submitApply(
+        name.value,
+        platform.value,
+        published_works.value
+    )
+    success.value = data.message || '申请已提交！'
+    await fetchStatus()
+  } catch (err) {
+    error.value = err.message || err || '提交失败，请稍后再试'
   } finally {
     submitting.value = false
   }

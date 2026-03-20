@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import authApi from '@/api/auth'
 
 // localStorage 键名
 const TOKEN_KEY = 'workshop_auth_token'
@@ -25,6 +26,7 @@ export const useAuthStore = defineStore('auth', () => {
       if (storedToken && storedUser) {
         token.value = storedToken
         user.value = JSON.parse(storedUser)
+        console.log('[Auth] 从 localStorage 恢复登录状态:', user.value?.username)
       }
     } catch (err) {
       console.error('[Auth] 读取 localStorage 失败:', err)
@@ -75,13 +77,8 @@ export const useAuthStore = defineStore('auth', () => {
   async function fetchMe() {
     loading.value = true
     try {
-      const headers = getAuthHeaders()
-      const res = await fetch('/auth/me', {
-        credentials: 'include',
-        headers,
-      })
-      if (!res.ok) throw new Error('Not authenticated')
-      const data = await res.json()
+      const data = await authApi.fetchMe()
+      console.log('[Auth] fetchMe 响应数据:', data)
       if (data) {
         user.value = data
         // 如果是 JWT 模式，更新缓存的用户信息
@@ -117,35 +114,36 @@ export const useAuthStore = defineStore('auth', () => {
       const authKey = 'ws_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8)
       const origin = window.location.origin
       const authUrl = `${origin}/auth/discord?authKey=${encodeURIComponent(authKey)}`
+      console.log('[Auth] iframe 模式，请求扩展打开 OAuth 弹窗:', authUrl)
+      console.log('[Auth] authKey:', authKey)
 
       // 开始轮询 /auth/poll 获取 token
       let pollCount = 0
       const maxPolls = 60 // 最多轮询 60 次（约 2 分钟）
       const pollInterval = 2000 // 每 2 秒轮询一次
 
-      function pollForToken() {
-        pollCount++
+      async function pollForToken() {
+          pollCount++
+          console.log(`[Auth] 轮询 token (${pollCount}/${maxPolls})...`)
 
-        fetch(`/auth/poll?key=${encodeURIComponent(authKey)}`)
-          .then(res => res.json())
-          .then(async data => {
-            if (data.token && data.user) {
-              // 成功获取 token
-              token.value = data.token
-              user.value = data.user
-              saveToStorage(data.token, data.user)
-              initialized.value = true
-            } else if (pollCount < maxPolls) {
-              // 继续轮询
-              setTimeout(pollForToken, pollInterval)
-            }
-          })
-          .catch(err => {
-            console.error('[Auth] 轮询错误:', err)
-            if (pollCount < maxPolls) {
-              setTimeout(pollForToken, pollInterval)
-            }
-          })
+          try {
+              const data = await authApi.pollToken(authKey)
+              if (data.token && data.user) {
+                  token.value = data.token
+                  user.value = data.user
+                  saveToStorage(data.token, data.user)
+                  initialized.value = true
+              } else if (pollCount < maxPolls) {
+                  setTimeout(pollForToken, pollInterval)
+              } else {
+                  console.warn('[Auth] 轮询超时，未获取到 token')
+              }
+          } catch (err) {
+              console.error('[Auth] 轮询错误:', err)
+              if (pollCount < maxPolls) {
+                  setTimeout(pollForToken, pollInterval)
+              }
+          }
       }
 
       // 延迟开始轮询，给 OAuth 流程一些时间
@@ -167,12 +165,7 @@ export const useAuthStore = defineStore('auth', () => {
    */
   async function logout() {
     try {
-      // 尝试调用服务端登出（清除 session）
-      await fetch('/auth/logout', {
-        method: 'POST',
-        credentials: 'include',
-        headers: getAuthHeaders(),
-      })
+      await authApi.logout()
     } catch (err) {
       console.error('[Auth] 登出请求失败:', err)
     } finally {

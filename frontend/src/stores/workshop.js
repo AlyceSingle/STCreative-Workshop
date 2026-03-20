@@ -1,9 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { getWorldbookName, saveWorldbookName } from '@/config/sections'
-
-// localStorage 键名
-const TOKEN_KEY = 'workshop_auth_token'
+import workshopApi from '@/api/workshop'
 
 // 检测 SillyTavern 环境（直接嵌入 iframe 模式）
 function isSillyTavernEnv() {
@@ -18,38 +16,6 @@ function isFromStExtension() {
   // iframe 模式：嵌入在 SillyTavern 页面的 iframe 中
   if (window.parent && window.parent !== window) return true
   return false
-}
-
-/**
- * 获取认证 token（直接从 localStorage 读取，不依赖 Pinia）
- */
-function getAuthToken() {
-  try {
-    return localStorage.getItem(TOKEN_KEY) || ''
-  } catch (e) {
-    return ''
-  }
-}
-
-/**
- * 带认证的 fetch 封装
- * 自动添加 Authorization header（如果有 token）
- * 直接从 localStorage 读取 token，避免循环依赖
- */
-export async function authFetch(url, options = {}) {
-  options = options || {}
-  options.headers = options.headers || {}
-  
-  const token = getAuthToken()
-  if (token) {
-    options.headers['Authorization'] = 'Bearer ' + token
-  }
-  
-  return fetch(url, {
-    ...options,
-    credentials: 'include',
-    cache: 'no-cache', // Prevents ST Extension iframe caching issues
-  })
 }
 
 // 将 workshop entry 转换为 TavernHelper WorldbookEntry 或自定义格式（不含 uid，由 TH 自动分配）
@@ -173,9 +139,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
     mySubscriptionsLoading.value = true
     error.value = null
     try {
-      const res = await authFetch('/api/workshop/my-subscriptions')
-      if (!res.ok) throw new Error('获取订阅列表失败')
-      const json = await res.json()
+      const json = await workshopApi.fetchMySubscriptions()
       mySubscriptions.value = json.data
     } catch (err) {
       error.value = err.message || '获取订阅列表失败'
@@ -187,9 +151,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
   async function fetchWorkshops() {
     workshopsLoading.value = true
     try {
-      const res = await authFetch('/api/workshop/workshops')
-      if (!res.ok) throw new Error('获取工坊列表失败')
-      const json = await res.json()
+      const json = await workshopApi.fetchWorkshops()
       workshops.value = json.data
     } catch (err) {
       error.value = err.message || '获取工坊列表失败'
@@ -201,16 +163,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
   async function createWorkshop(payload) {
     error.value = null
     try {
-      const res = await authFetch('/api/workshop/workshops', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      const json = await res.json()
-      if (!res.ok) {
-        error.value = json.error || '创建工坊失败'
-        return null
-      }
+      const json = await workshopApi.createWorkshop(payload)
       workshops.value = [...workshops.value, json.data]
       return json.data
     } catch (err) {
@@ -222,17 +175,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
   async function updateWorkshop(id, payload) {
     error.value = null
     try {
-      const res = await authFetch(`/api/workshop/workshops/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      const json = await res.json()
-      if (!res.ok) {
-        error.value = json.error || '更新工坊失败'
-        return null
-      }
-      // 更新本地缓存
+      const json = await workshopApi.updateWorkshop(id, payload)
       workshops.value = workshops.value.map(w => w.id === id ? json.data : w)
       return json.data
     } catch (err) {
@@ -244,15 +187,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
   async function deleteWorkshop(id) {
     error.value = null
     try {
-      const res = await authFetch(`/api/workshop/workshops/${id}`, {
-        method: 'DELETE',
-      })
-      const json = await res.json()
-      if (!res.ok) {
-        error.value = json.error || '删除工坊失败'
-        return false
-      }
-      // 从本地缓存移除
+      await workshopApi.deleteWorkshop(id)
       workshops.value = workshops.value.filter(w => w.id !== id)
       return true
     } catch (err) {
@@ -268,16 +203,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
     loading.value = true
     error.value = null
     try {
-      const params = new URLSearchParams({ page, limit: 20 })
-      if (workshop) params.set('workshop', workshop)
-      if (search) params.set('q', search)
-      if (tag) params.set('tag', tag)
-      if (authorId) params.set('author_id', authorId)
-      if (sort) params.set('sort', sort)
-
-      const res = await authFetch(`/api/workshop?${params}`)
-      if (!res.ok) throw new Error('获取 Pack 列表失败')
-      const json = await res.json()
+      const json = await workshopApi.fetchPacks(page, { workshop, search, tag, authorId, sort })
       packs.value = json.data
       pagination.value = json.pagination
     } catch (err) {
@@ -291,9 +217,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
     currentPackLoading.value = true
     error.value = null
     try {
-      const res = await authFetch(`/api/workshop/packs/${packId}`)
-      if (!res.ok) throw new Error('获取 Pack 详情失败')
-      const json = await res.json()
+      const json = await workshopApi.fetchPack(packId)
       currentPack.value = json.data
       return json.data
     } catch (err) {
@@ -313,16 +237,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
   async function createPack(payload) {
     error.value = null
     try {
-      const res = await authFetch('/api/workshop/packs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      const json = await res.json()
-      if (!res.ok) {
-        error.value = json.error || '创建 Pack 失败'
-        return null
-      }
+      const json = await workshopApi.createPack(payload)
       return json.data
     } catch (err) {
       error.value = err.message || '创建 Pack 失败'
@@ -333,16 +248,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
   async function updatePack(packId, payload) {
     error.value = null
     try {
-      const res = await authFetch(`/api/workshop/packs/${packId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      const json = await res.json()
-      if (!res.ok) {
-        error.value = json.error || '更新 Pack 失败'
-        return false
-      }
+      await workshopApi.updatePack(packId, payload)
       return true
     } catch (err) {
       error.value = err.message || '更新 Pack 失败'
@@ -353,14 +259,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
   async function deletePack(packId) {
     error.value = null
     try {
-      const res = await authFetch(`/api/workshop/packs/${packId}`, {
-        method: 'DELETE',
-      })
-      const json = await res.json()
-      if (!res.ok) {
-        error.value = json.error || '删除 Pack 失败'
-        return false
-      }
+      await workshopApi.deletePack(packId)
       packs.value = packs.value.filter((p) => p.id !== packId)
       return true
     } catch (err) {
@@ -374,15 +273,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
   async function toggleLike(packId) {
     error.value = null
     try {
-      const res = await authFetch(`/api/workshop/packs/${packId}/like`, {
-        method: 'POST',
-      })
-      const json = await res.json()
-      if (!res.ok) {
-        error.value = json.error || '操作失败'
-        return null
-      }
-      // 更新列表中的数据
+      const json = await workshopApi.toggleLike(packId)
       const pack = packs.value.find((p) => p.id === packId)
       if (pack) {
         pack.is_liked = json.liked
@@ -407,7 +298,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
       // ST 扩展模式：先执行 ST 操作，成功后再调用服务器 API
       if (stConnected.value) {
         const isSubscribing = forceAction === 'subscribe' || (!forceAction && !pack.is_subscribed)
-        
+
         if (isSubscribing) {
           const stSuccess = await _subscribeViaST(pack, selectedEntryIds)
           if (!stSuccess) {
@@ -425,16 +316,9 @@ export const useWorkshopStore = defineStore('workshop', () => {
 
       // 调用服务器 API
       const bodyPayload = forceAction ? JSON.stringify({ action: forceAction }) : '{}'
-      const res = await authFetch(`/api/workshop/packs/${pack.id}/subscribe`, {
-        method: 'POST',
-        headers: forceAction ? { 'Content-Type': 'application/json' } : {},
-        body: forceAction ? bodyPayload : null,
-      })
-      const json = await res.json()
-      if (!res.ok) {
-        error.value = json.error || '操作失败'
-        return null
-      }
+        const json = await workshopApi.toggleSubscribe(
+            pack.id,
+            forceAction ? bodyPayload : null)
 
       // 更新列表/详情中的数据
       const p = packs.value.find((p) => p.id === pack.id)
@@ -467,9 +351,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
 
   async function fetchEntry(entryId) {
     try {
-      const res = await authFetch(`/api/workshop/entries/${entryId}`)
-      if (!res.ok) throw new Error('获取条目失败')
-      const json = await res.json()
+      const json = await workshopApi.fetchEntry(entryId)
       return json.data
     } catch (err) {
       error.value = err.message || '获取条目失败'
@@ -480,16 +362,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
   async function createEntry(packId, payload) {
     error.value = null
     try {
-      const res = await authFetch(`/api/workshop/packs/${packId}/entries`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      const json = await res.json()
-      if (!res.ok) {
-        error.value = json.error || '添加条目失败'
-        return null
-      }
+      const json = await workshopApi.createEntry(packId, payload)
       return json.data
     } catch (err) {
       error.value = err.message || '添加条目失败'
@@ -500,16 +373,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
   async function createEntries(packId, entries) {
     error.value = null
     try {
-      const res = await authFetch(`/api/workshop/packs/${packId}/entries/batch`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entries }),
-      })
-      const json = await res.json()
-      if (!res.ok) {
-        error.value = json.error || '批量添加条目失败'
-        return false
-      }
+      await workshopApi.createEntries(packId, entries)
       return true
     } catch (err) {
       error.value = err.message || '批量添加条目失败'
@@ -520,16 +384,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
   async function updateEntry(entryId, payload) {
     error.value = null
     try {
-      const res = await authFetch(`/api/workshop/entries/${entryId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      const json = await res.json()
-      if (!res.ok) {
-        error.value = json.error || '更新条目失败'
-        return false
-      }
+      await workshopApi.updateEntry(entryId, payload)
       return true
     } catch (err) {
       error.value = err.message || '更新条目失败'
@@ -540,15 +395,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
   async function deleteEntry(entryId) {
     error.value = null
     try {
-      const res = await authFetch(`/api/workshop/entries/${entryId}`, {
-        method: 'DELETE',
-      })
-      const json = await res.json()
-      if (!res.ok) {
-        error.value = json.error || '删除条目失败'
-        return false
-      }
-      // 从当前 pack 的 entries 中移除
+      await workshopApi.deleteEntry(entryId)
       if (currentPack.value && currentPack.value.entries) {
         currentPack.value.entries = currentPack.value.entries.filter((e) => e.id !== entryId)
         currentPack.value.entry_count = currentPack.value.entries.length
@@ -740,9 +587,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
       // 获取完整条目（如果当前 pack 没有 entries）
       let entries = pack.entries
       if (!entries) {
-        const res = await authFetch(`/api/workshop/packs/${pack.id}`)
-        if (!res.ok) throw new Error('获取 Pack 详情失败')
-        const json = await res.json()
+        const json = await workshopApi.fetchPack(pack.id)
         entries = json.data.entries || []
       }
 
@@ -798,11 +643,8 @@ export const useWorkshopStore = defineStore('workshop', () => {
       if (p && p.id === packId && p.entries) {
         entries = p.entries
       } else {
-        const res = await authFetch(`/api/workshop/packs/${packId}`)
-        if (res.ok) {
-          const json = await res.json()
-          entries = json.data.entries || []
-        }
+        const json = await workshopApi.fetchPack(packId)
+        entries = json.data.entries || []
       }
       const stEntries = entries.map(entry => toStEntry(entry, packId))
 
@@ -922,9 +764,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
       // 获取最新 pack 数据（含所有条目）
       let entries = pack.entries
       if (!entries) {
-        const res = await authFetch(`/api/workshop/packs/${pack.id}`)
-        if (!res.ok) throw new Error('获取 Pack 详情失败')
-        const json = await res.json()
+        const json = await workshopApi.fetchPack(pack.id)
         entries = json.data.entries || []
       }
 

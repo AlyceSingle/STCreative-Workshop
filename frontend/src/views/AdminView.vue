@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import adminApi from '@/api/admin'
 import CustomSelect from '../components/CustomSelect.vue'
 
 const router = useRouter()
@@ -14,13 +15,9 @@ const loginLoading = ref(false)
 
 async function checkLogin() {
   try {
-    const res = await fetch('/api/admin/me', { credentials: 'include' })
-    adminLoggedIn.value = res.ok
-    if (res.ok) {
-      localStorage.setItem('isAdmin', 'true')
-    } else {
-      localStorage.removeItem('isAdmin')
-    }
+    await adminApi.checkLogin(); //axios会自动处理错误的http码
+    adminLoggedIn.value = true;
+    localStorage.setItem('isAdmin', 'true')
   } catch {
     adminLoggedIn.value = false
     localStorage.removeItem('isAdmin')
@@ -31,21 +28,11 @@ async function doLogin() {
   loginError.value = ''
   loginLoading.value = true
   try {
-    const res = await fetch('/api/admin/login', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(loginForm.value),
-    })
-    const data = await res.json()
-    if (res.ok) {
-      adminLoggedIn.value = true
-      localStorage.setItem('isAdmin', 'true')
-      activeTab.value = 'applications'
-      loadApplications()
-    } else {
-      loginError.value = data.error || '登录失败'
-    }
+    await adminApi.login(loginForm.value.username, loginForm.value.password)
+    adminLoggedIn.value = true
+    localStorage.setItem('isAdmin', 'true')
+    activeTab.value = 'applications'
+    await loadApplications()
   } catch {
     loginError.value = '网络错误，请稍后再试'
   } finally {
@@ -54,7 +41,7 @@ async function doLogin() {
 }
 
 async function doLogout() {
-  await fetch('/api/admin/logout', { method: 'POST', credentials: 'include' })
+  await adminApi.logout()
   adminLoggedIn.value = false
   localStorage.removeItem('isAdmin')
 }
@@ -69,7 +56,7 @@ function switchTab(tab) {
   if (tab === 'applications') loadApplications()
   else if (tab === 'users') loadUsers()
   else if (tab === 'packs') loadPacks()
-  else if (tab === 'workshops') loadWorkshopApps()
+  else if (tab === 'workshops') loadWorkshopApps() //TODO：函数未定义？
   else if (tab === 'workshop-manage') loadAllWorkshops()
 }
 
@@ -84,8 +71,7 @@ const reviewLoading = ref(false)
 async function loadApplications() {
   appLoading.value = true
   try {
-    const res = await fetch(`/api/admin/applications?status=${appFilter.value}`, { credentials: 'include' })
-    const data = await res.json()
+    const data = await adminApi.fetchApplications(appFilter.value)
     applications.value = data.data || []
   } catch {
     applications.value = []
@@ -103,16 +89,9 @@ async function submitReview() {
   if (!reviewModal.value) return
   reviewLoading.value = true
   try {
-    const res = await fetch(`/api/admin/applications/${reviewModal.value.app.id}`, {
-      method: 'PUT',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: reviewModal.value.action, note: reviewNote.value }),
-    })
-    if (res.ok) {
-      reviewModal.value = null
-      await loadApplications()
-    }
+    await adminApi.reviewApplication(reviewModal.value.app.id, reviewModal.value.action, reviewNote.value)
+    reviewModal.value = null
+    await loadApplications()
   } finally {
     reviewLoading.value = false
   }
@@ -135,9 +114,8 @@ async function loadUsers(page = 1) {
     if (userQuery.value) params.append('q', userQuery.value)
     if (userRoleFilter.value) params.append('role', userRoleFilter.value)
     if (userBanFilter.value) params.append('is_banned', userBanFilter.value)
-    
-    const res = await fetch(`/api/admin/users?${params}`, { credentials: 'include' })
-    const data = await res.json()
+
+    const data = await adminApi.fetchUsers(page, userQuery.value)
     users.value = data.data || []
     userPagination.value = data.pagination || {}
   } catch {
@@ -149,30 +127,20 @@ async function loadUsers(page = 1) {
 
 async function changeRole(userId, role) {
   if (!confirm(`确认将此用户角色改为「${roleLabel(role)}」？`)) return
-  await fetch(`/api/admin/users/${userId}/role`, {
-    method: 'PUT',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ role }),
-  })
+  await adminApi.changeUserRole(userId, role)
   await loadUsers(userPage.value)
 }
 
 async function deleteUser(userId, username) {
   if (!confirm(`确认删除用户「${username}」？此操作不可恢复，其所有模组也将被删除。`)) return
-  await fetch(`/api/admin/users/${userId}`, { method: 'DELETE', credentials: 'include' })
+  await adminApi.deleteUser(userId)
   await loadUsers(userPage.value)
 }
 
 async function changeBanStatus(userId, isBanned, username) {
   const action = isBanned ? '封禁' : '解封'
   if (!confirm(`确认${action}用户「${username}」？`)) return
-  await fetch(`/api/admin/users/${userId}/ban`, {
-    method: 'PUT',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ is_banned: isBanned ? 1 : 0 }),
-  })
+  await adminApi.changeBanStatus(userId, isBanned)
   await loadUsers(userPage.value)
 }
 
@@ -193,9 +161,8 @@ async function loadPacks(page = 1) {
     if (packQuery.value) params.append('q', packQuery.value)
     if (packWorkshopFilter.value) params.append('workshop_id', packWorkshopFilter.value)
     if (packSortFilter.value) params.append('sort', packSortFilter.value)
-    
-    const res = await fetch(`/api/admin/packs?${params}`, { credentials: 'include' })
-    const data = await res.json()
+
+    const data = await adminApi.fetchPacks(page, packQuery.value)
     packs.value = data.data || []
     packPagination.value = data.pagination || {}
   } catch {
@@ -207,15 +174,16 @@ async function loadPacks(page = 1) {
 
 async function deletePack(packId, title) {
   if (!confirm(`确认删除模组「${title}」？`)) return
-  await fetch(`/api/admin/packs/${packId}`, { method: 'DELETE', credentials: 'include' })
+  await adminApi.deletePack(packId)
   await loadPacks(packPage.value)
 }
 
-// ── 工坊申请管理 ──────────────────────────────────────────────────────
+// 工坊申请相关
 const workshopApps = ref([])
 const workshopAppFilter = ref('pending')
 const workshopAppsLoading = ref(false)
 
+// 工坊管理相关（合并后只保留一次定义）
 const allWorkshops = ref([])
 const workshopStatusFilter = ref('')
 const workshopTypeFilter = ref('')
@@ -223,10 +191,11 @@ const allWorkshopsLoading = ref(false)
 const workshopQuery = ref('')
 const availableWorkshops = ref([])  // 用于模组筛选的工坊列表
 
+// 加载可用工坊（修复变量顺序错误）
 async function loadAvailableWorkshops() {
   try {
-    const res = await fetch('/api/admin/workshops?status=all', { credentials: 'include' })
-    const data = await res.json()
+    const data = await adminApi.fetchWorkshopApplications(workshopAppFilter.value)
+    workshopApps.value = data.data || []
     availableWorkshops.value = data.data || []
   } catch {
     availableWorkshops.value = []
@@ -240,9 +209,8 @@ async function loadAllWorkshops() {
     if (workshopStatusFilter.value) params.set('status', workshopStatusFilter.value)
     if (workshopTypeFilter.value) params.append('type', workshopTypeFilter.value)
     if (workshopQuery.value.trim()) params.append('search', workshopQuery.value.trim())
-    
-    const res = await fetch(`/api/admin/workshops?${params}`, { credentials: 'include' })
-    const data = await res.json()
+
+    const data = await adminApi.fetchAllWorkshops(params)
     allWorkshops.value = data.data || []
   } catch {
     allWorkshops.value = []
@@ -253,21 +221,19 @@ async function loadAllWorkshops() {
 
 async function deleteWorkshop(id, name) {
   if (!confirm(`确认删除工坊「${name}」？其下所有模组将失去所属工坊关联。`)) return
-  await fetch(`/api/admin/workshops/${id}`, { method: 'DELETE', credentials: 'include' })
+  await adminApi.deleteWorkshop(id)
   await loadAllWorkshops()
 }
 
-// ── 用户详情弹窗 ──────────────────────────────────────────────────────
-const userDetail = ref(null)        // null = 关闭；对象 = 展示详情
+const userDetail = ref(null)
 const userDetailLoading = ref(false)
 
 async function loadUserDetail(userId) {
   userDetailLoading.value = true
   userDetail.value = { loading: true }  // 先打开弹窗显示加载态
   try {
-    const res = await fetch(`/api/admin/users/${userId}/detail`, { credentials: 'include' })
-    const data = await res.json()
-    if (res.ok) {
+    const data = await adminApi.fetchUserDetail(userId)
+    if (data) {
       userDetail.value = data.data
     } else {
       userDetail.value = null
@@ -306,8 +272,8 @@ function fmtDate(d) {
 onMounted(async () => {
   await checkLogin()
   if (adminLoggedIn.value) {
-    loadApplications()
-    loadAvailableWorkshops()  // 加载工坊列表供筛选使用
+    await loadApplications()
+    await loadAvailableWorkshops()  // 加载工坊列表供筛选使用
   }
 })
 </script>
@@ -340,12 +306,12 @@ onMounted(async () => {
 
     <!-- ═══ 已登录：管理后台 ════════════════════════════════════════════ -->
     <div v-else class="flex min-h-screen overflow-hidden" style="background:#FFFBF0;">
-      
+
       <!-- 移动端遮罩 -->
       <div v-if="sidebarOpen" class="fixed inset-0 z-30 lg:hidden" style="background:rgba(0,0,0,0.35);" @click="sidebarOpen = false"></div>
 
       <!-- 左侧固定导航栏 -->
-      <aside class="fixed lg:static inset-y-0 left-0 z-40 w-60 flex-shrink-0 flex flex-col transition-all duration-300 ease-in-out" 
+      <aside class="fixed lg:static inset-y-0 left-0 z-40 w-60 flex-shrink-0 flex flex-col transition-all duration-300 ease-in-out"
              :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:-ml-60'"
              style="background:#FFF7ED; border-right:2.5px solid #FDBA74;">
         <!-- 顶部标题 -->
@@ -436,7 +402,7 @@ onMounted(async () => {
 
         <!-- 底部退出按钮 -->
         <div class="p-4" style="border-top:1.5px solid #FED7AA;">
-          <button class="w-full px-4 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2" 
+          <button class="w-full px-4 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2"
             style="background:#FEE2E2; color:#991B1B; border:1.5px solid #FCA5A5;"
             @click="doLogout">
             <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -523,7 +489,7 @@ onMounted(async () => {
             ]"
             @update:modelValue="loadAllWorkshops"
           />
-          
+
           <CustomSelect
             v-model="workshopTypeFilter"
             :options="[
@@ -581,7 +547,7 @@ onMounted(async () => {
             placeholder="全部角色"
             @update:modelValue="loadUsers(1)"
           />
-          
+
           <CustomSelect
             v-model="userBanFilter"
             :options="[
@@ -592,7 +558,7 @@ onMounted(async () => {
             placeholder="全部状态"
             @update:modelValue="loadUsers(1)"
           />
-          
+
           <input v-model="userQuery" class="input text-sm flex-1" style="min-width: 200px;" placeholder="搜索用户名…" @keyup.enter="loadUsers(1)" />
           <button class="btn-secondary text-sm" @click="loadUsers(1)">搜索</button>
         </div>
@@ -644,7 +610,7 @@ onMounted(async () => {
             placeholder="全部工坊"
             @update:modelValue="loadPacks(1)"
           />
-          
+
           <CustomSelect
             v-model="packSortFilter"
             :options="[
@@ -654,7 +620,7 @@ onMounted(async () => {
             ]"
             @update:modelValue="loadPacks(1)"
           />
-          
+
           <input v-model="packQuery" class="input text-sm flex-1" style="min-width: 200px;" placeholder="搜索模组标题…" @keyup.enter="loadPacks(1)" />
           <button class="btn-secondary text-sm" @click="loadPacks(1)">搜索</button>
         </div>
@@ -727,7 +693,7 @@ onMounted(async () => {
           </div>
         </div>
       </div>
-        
+
         </main>
       </div>
     </div>

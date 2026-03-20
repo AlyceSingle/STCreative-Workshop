@@ -1,5 +1,6 @@
-import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import {defineStore} from 'pinia'
+import {ref} from 'vue'
+import storiesApi from '@/api/stories'
 
 export const useStoriesStore = defineStore('stories', () => {
   const stories = ref([])
@@ -13,15 +14,10 @@ export const useStoriesStore = defineStore('stories', () => {
     loading.value = true
     error.value = null
     try {
-      const params = new URLSearchParams({ page, limit: 12 })
-      if (tag) params.set('tag', tag)
-      const res = await fetch(`/api/stories?${params}`, { credentials: 'include' })
-      if (!res.ok) throw new Error('Failed to fetch stories')
-      const data = await res.json()
+      const data = await storiesApi.fetchStories(page, tag)
       stories.value = data.stories
       pagination.value = data.pagination
     } catch (e) {
-      error.value = e.message
     } finally {
       loading.value = false
     }
@@ -29,42 +25,22 @@ export const useStoriesStore = defineStore('stories', () => {
 
   async function fetchTags() {
     try {
-      const res = await fetch('/api/tags', { credentials: 'include' })
-      if (!res.ok) throw new Error('Failed to fetch tags')
-      tags.value = await res.json()
+      tags.value = await storiesApi.fetchTags()
     } catch {
       tags.value = []
     }
   }
 
   async function fetchStory(id) {
-    const res = await fetch(`/api/stories/${id}`, { credentials: 'include' })
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}))
-      throw new Error(data.error || '故事不存在')
-    }
-    return res.json()
+      return await storiesApi.fetchStory(id)
   }
 
   async function createStory(payload) {
-    const res = await fetch('/api/stories', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(payload),
-    })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error || '发布失败')
-    return data
+      return await storiesApi.createStory(payload)
   }
 
   async function deleteStory(id) {
-    const res = await fetch(`/api/stories/${id}`, {
-      method: 'DELETE',
-      credentials: 'include',
-    })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error || '删除失败')
+    const data = await storiesApi.deleteStory(id)
     stories.value = stories.value.filter((s) => s.id !== id)
     return data
   }

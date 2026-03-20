@@ -3,6 +3,7 @@
 node_modules
 dist
 @types
+/.idea/
 
 .env
 
@@ -10,6 +11,7 @@ dist
 *.md
 !AGENTS.md
 !README.md
+!DOC/接口文档/*.md
 
 # 忽略ai创的脚本
 *.ps1
