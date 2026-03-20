@@ -40,6 +40,13 @@ function requireAuth(req, res, next) {
     return next();
   }
 
+  // 3. 管理员 Session (允许管理员操作需要认证的接口，主要用于编辑功能)
+  if (req.session && req.session.isAdmin) {
+    // 注入一个伪造的管理员 user 对象以通过后续权限检查
+    req.user = { id: 0, role: 'admin', username: 'Admin' };
+    return next();
+  }
+
   res.status(401).json({ error: 'Unauthorized', message: '请先登录' });
 }
 

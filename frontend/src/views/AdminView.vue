@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import CustomSelect from '../components/CustomSelect.vue'
 
 const router = useRouter()
 
@@ -15,8 +16,14 @@ async function checkLogin() {
   try {
     const res = await fetch('/api/admin/me', { credentials: 'include' })
     adminLoggedIn.value = res.ok
+    if (res.ok) {
+      localStorage.setItem('isAdmin', 'true')
+    } else {
+      localStorage.removeItem('isAdmin')
+    }
   } catch {
     adminLoggedIn.value = false
+    localStorage.removeItem('isAdmin')
   }
 }
 
@@ -33,6 +40,7 @@ async function doLogin() {
     const data = await res.json()
     if (res.ok) {
       adminLoggedIn.value = true
+      localStorage.setItem('isAdmin', 'true')
       activeTab.value = 'applications'
       loadApplications()
     } else {
@@ -48,13 +56,16 @@ async function doLogin() {
 async function doLogout() {
   await fetch('/api/admin/logout', { method: 'POST', credentials: 'include' })
   adminLoggedIn.value = false
+  localStorage.removeItem('isAdmin')
 }
 
 // ── Tab 切换 ──────────────────────────────────────────────────────────
 const activeTab = ref('applications')
+const sidebarOpen = ref(window.innerWidth >= 1024)
 
 function switchTab(tab) {
   activeTab.value = tab
+  if (window.innerWidth < 1024) sidebarOpen.value = false // 手机端点击后自动收起
   if (tab === 'applications') loadApplications()
   else if (tab === 'users') loadUsers()
   else if (tab === 'packs') loadPacks()
@@ -112,14 +123,20 @@ const users = ref([])
 const userPage = ref(1)
 const userPagination = ref({})
 const userQuery = ref('')
+const userRoleFilter = ref('')
+const userBanFilter = ref('')
 const usersLoading = ref(false)
 
 async function loadUsers(page = 1) {
   usersLoading.value = true
   userPage.value = page
   try {
-    const q = userQuery.value ? `&q=${encodeURIComponent(userQuery.value)}` : ''
-    const res = await fetch(`/api/admin/users?page=${page}&limit=20${q}`, { credentials: 'include' })
+    const params = new URLSearchParams({ page, limit: 20 })
+    if (userQuery.value) params.append('q', userQuery.value)
+    if (userRoleFilter.value) params.append('role', userRoleFilter.value)
+    if (userBanFilter.value) params.append('is_banned', userBanFilter.value)
+    
+    const res = await fetch(`/api/admin/users?${params}`, { credentials: 'include' })
     const data = await res.json()
     users.value = data.data || []
     userPagination.value = data.pagination || {}
@@ -164,14 +181,20 @@ const packs = ref([])
 const packPage = ref(1)
 const packPagination = ref({})
 const packQuery = ref('')
+const packWorkshopFilter = ref('')
+const packSortFilter = ref('latest')
 const packsLoading = ref(false)
 
 async function loadPacks(page = 1) {
   packsLoading.value = true
   packPage.value = page
   try {
-    const q = packQuery.value ? `&q=${encodeURIComponent(packQuery.value)}` : ''
-    const res = await fetch(`/api/admin/packs?page=${page}&limit=20${q}`, { credentials: 'include' })
+    const params = new URLSearchParams({ page, limit: 20 })
+    if (packQuery.value) params.append('q', packQuery.value)
+    if (packWorkshopFilter.value) params.append('workshop_id', packWorkshopFilter.value)
+    if (packSortFilter.value) params.append('sort', packSortFilter.value)
+    
+    const res = await fetch(`/api/admin/packs?${params}`, { credentials: 'include' })
     const data = await res.json()
     packs.value = data.data || []
     packPagination.value = data.pagination || {}
@@ -193,39 +216,32 @@ const workshopApps = ref([])
 const workshopAppFilter = ref('pending')
 const workshopAppsLoading = ref(false)
 
-async function loadWorkshopApps() {
-  workshopAppsLoading.value = true
+const allWorkshops = ref([])
+const workshopStatusFilter = ref('')
+const workshopTypeFilter = ref('')
+const allWorkshopsLoading = ref(false)
+const workshopQuery = ref('')
+const availableWorkshops = ref([])  // 用于模组筛选的工坊列表
+
+async function loadAvailableWorkshops() {
   try {
-    const res = await fetch(`/api/admin/workshops?status=${workshopAppFilter.value}`, { credentials: 'include' })
+    const res = await fetch('/api/admin/workshops?status=all', { credentials: 'include' })
     const data = await res.json()
-    workshopApps.value = data.data || []
+    availableWorkshops.value = data.data || []
   } catch {
-    workshopApps.value = []
-  } finally {
-    workshopAppsLoading.value = false
+    availableWorkshops.value = []
   }
 }
-
-async function approveWorkshop(id) {
-  if (!confirm('确认通过该工坊申请？')) return
-  await fetch(`/api/admin/workshops/${id}/approve`, { method: 'POST', credentials: 'include' })
-  await loadWorkshopApps()
-}
-
-async function rejectWorkshop(id) {
-  if (!confirm('确认拒绝该工坊申请？')) return
-  await fetch(`/api/admin/workshops/${id}/reject`, { method: 'POST', credentials: 'include' })
-  await loadWorkshopApps()
-}
-
-// ── 工坊管理 ──────────────────────────────────────────────────────────
-const allWorkshops = ref([])
-const allWorkshopsLoading = ref(false)
 
 async function loadAllWorkshops() {
   allWorkshopsLoading.value = true
   try {
-    const res = await fetch('/api/admin/workshops?status=all', { credentials: 'include' })
+    const params = new URLSearchParams({ status: 'all' })
+    if (workshopStatusFilter.value) params.set('status', workshopStatusFilter.value)
+    if (workshopTypeFilter.value) params.append('type', workshopTypeFilter.value)
+    if (workshopQuery.value.trim()) params.append('search', workshopQuery.value.trim())
+    
+    const res = await fetch(`/api/admin/workshops?${params}`, { credentials: 'include' })
     const data = await res.json()
     allWorkshops.value = data.data || []
   } catch {
@@ -289,12 +305,15 @@ function fmtDate(d) {
 
 onMounted(async () => {
   await checkLogin()
-  if (adminLoggedIn.value) loadApplications()
+  if (adminLoggedIn.value) {
+    loadApplications()
+    loadAvailableWorkshops()  // 加载工坊列表供筛选使用
+  }
 })
 </script>
 
 <template>
-  <div class="page-container py-8 max-w-5xl">
+  <div class="min-h-screen" style="background:#FFFBF0;">
 
     <!-- ═══ 未登录：显示登录表单 ═══════════════════════════════════════ -->
     <div v-if="!adminLoggedIn" class="max-w-sm mx-auto mt-16">
@@ -320,22 +339,132 @@ onMounted(async () => {
     </div>
 
     <!-- ═══ 已登录：管理后台 ════════════════════════════════════════════ -->
-    <div v-else>
-      <!-- 顶栏 -->
-      <div class="flex items-center justify-between mb-6 flex-wrap gap-3">
-        <h1 class="text-2xl font-bold" style="font-family:'Fredoka',sans-serif; color:#9A3412;">管理后台</h1>
-        <button class="btn-secondary text-sm" @click="doLogout">退出登录</button>
-      </div>
+    <div v-else class="flex min-h-screen overflow-hidden" style="background:#FFFBF0;">
+      
+      <!-- 移动端遮罩 -->
+      <div v-if="sidebarOpen" class="fixed inset-0 z-30 lg:hidden" style="background:rgba(0,0,0,0.35);" @click="sidebarOpen = false"></div>
 
-      <!-- Tab 导航 -->
-      <div class="flex gap-2 mb-6 flex-wrap">
-        <button v-for="t in [{k:'applications',l:'申请管理'},{k:'workshops',l:'工坊申请'},{k:'workshop-manage',l:'工坊管理'},{k:'users',l:'用户管理'},{k:'packs',l:'模组管理'}]" :key="t.k"
-          class="px-5 py-2 rounded-full font-bold text-sm transition-all duration-150"
-          :style="activeTab===t.k ? 'background:#F97316; color:white; box-shadow:3px 3px 0 #C2410C; transform:rotate(-0.5deg);' : 'background:#FFF7ED; color:#78350F; border:2px solid #FDBA74;'"
-          @click="switchTab(t.k)">
-          {{ t.l }}
-        </button>
-      </div>
+      <!-- 左侧固定导航栏 -->
+      <aside class="fixed lg:static inset-y-0 left-0 z-40 w-60 flex-shrink-0 flex flex-col transition-all duration-300 ease-in-out" 
+             :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:-ml-60'"
+             style="background:#FFF7ED; border-right:2.5px solid #FDBA74;">
+        <!-- 顶部标题 -->
+        <div class="p-6 flex items-center justify-between" style="border-bottom:1.5px solid #FED7AA;">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-full flex items-center justify-center" style="background:#FFF7ED; border:2px solid #FDBA74;">
+              <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="#F97316" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+            </div>
+            <h1 class="text-lg font-bold" style="font-family:'Fredoka',sans-serif; color:#9A3412;">管理后台</h1>
+          </div>
+          <button class="lg:hidden p-1.5 rounded-xl transition-colors text-orange-600 hover:bg-orange-100" @click="sidebarOpen=false">
+            <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- 导航菜单 -->
+        <nav class="flex-1 p-4 flex flex-col gap-2">
+          <button
+            class="nav-btn"
+            :class="{ 'is-active': activeTab === 'applications' }"
+            @click="switchTab('applications')"
+          >
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+              <polyline points="10 9 9 9 8 9"></polyline>
+            </svg>
+            <span>申请管理</span>
+          </button>
+
+          <button
+            class="nav-btn"
+            :class="{ 'is-active': activeTab === 'workshops' }"
+            @click="switchTab('workshops')"
+          >
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+              <polyline points="9 22 9 12 15 12 15 22"></polyline>
+            </svg>
+            <span>工坊申请</span>
+          </button>
+
+          <button
+            class="nav-btn"
+            :class="{ 'is-active': activeTab === 'workshop-manage' }"
+            @click="switchTab('workshop-manage')"
+          >
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect>
+              <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
+            </svg>
+            <span>工坊管理</span>
+          </button>
+
+          <button
+            class="nav-btn"
+            :class="{ 'is-active': activeTab === 'users' }"
+            @click="switchTab('users')"
+          >
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+              <circle cx="12" cy="7" r="4"></circle>
+            </svg>
+            <span>用户管理</span>
+          </button>
+
+          <button
+            class="nav-btn"
+            :class="{ 'is-active': activeTab === 'packs' }"
+            @click="switchTab('packs')"
+          >
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="16.5" y1="9.4" x2="7.5" y2="4.21"></line>
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+              <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+              <line x1="12" y1="22.08" x2="12" y2="12"></line>
+            </svg>
+            <span>模组管理</span>
+          </button>
+        </nav>
+
+        <!-- 底部退出按钮 -->
+        <div class="p-4" style="border-top:1.5px solid #FED7AA;">
+          <button class="w-full px-4 py-2.5 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2" 
+            style="background:#FEE2E2; color:#991B1B; border:1.5px solid #FCA5A5;"
+            @click="doLogout">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+              <polyline points="16 17 21 12 16 7"></polyline>
+              <line x1="21" y1="12" x2="9" y2="12"></line>
+            </svg>
+            <span>退出登录</span>
+          </button>
+        </div>
+      </aside>
+
+      <!-- 右侧主内容区 -->
+      <div class="flex-1 flex flex-col min-w-0 h-screen overflow-y-auto">
+        <!-- 顶部控制栏 (包含折叠按钮) -->
+        <div class="sticky top-0 z-20 px-4 py-3 lg:px-8 lg:py-6 flex items-center gap-4" style="background:rgba(255,251,240,0.9); backdrop-filter:blur(8px);">
+          <button @click="sidebarOpen = !sidebarOpen" class="flex items-center justify-center w-10 h-10 flex-shrink-0 rounded-xl transition-colors cursor-pointer" style="background:#FFF7ED; border:2.5px solid #FDBA74; color:#F97316; box-shadow:2px 2px 0 #FDBA74;">
+            <svg v-if="!sidebarOpen" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/>
+            </svg>
+            <svg v-else class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+          <h2 class="text-xl font-bold lg:hidden" style="font-family:'Fredoka',sans-serif; color:#9A3412;">管理后台</h2>
+        </div>
+
+        <main class="flex-1 px-4 pb-4 lg:px-8 lg:pb-8 max-w-7xl w-full mx-auto">
 
       <!-- ─── 申请管理 ──────────────────────────────────────────────── -->
       <div v-if="activeTab==='applications'">
@@ -382,6 +511,32 @@ onMounted(async () => {
 
       <!-- ─── 工坊管理 ──────────────────────────────────────────────── -->
       <div v-if="activeTab==='workshop-manage'">
+        <!-- 筛选栏 -->
+        <div class="flex gap-3 mb-4 flex-wrap items-center">
+          <CustomSelect
+            v-model="workshopStatusFilter"
+            :options="[
+              { value: '', label: '全部状态' },
+              { value: 'active', label: '已上线' },
+              { value: 'pending', label: '待审核' },
+              { value: 'rejected', label: '已拒绝' }
+            ]"
+            @update:modelValue="loadAllWorkshops"
+          />
+          
+          <CustomSelect
+            v-model="workshopTypeFilter"
+            :options="[
+              { value: '', label: '全部类型' },
+              { value: 'builtin', label: '内置工坊' },
+              { value: 'user', label: '用户创建' }
+            ]"
+            @update:modelValue="loadAllWorkshops"
+          />
+
+          <input v-model="workshopQuery" class="input text-sm flex-1" style="min-width: 200px;" placeholder="搜索工坊名称或slug…" @keyup.enter="loadAllWorkshops" />
+          <button class="btn-secondary text-sm" @click="loadAllWorkshops">搜索</button>
+        </div>
         <div v-if="allWorkshopsLoading" class="flex justify-center py-12">
           <div class="w-8 h-8 rounded-full animate-spin" style="border:3px solid #FED7AA; border-top-color:#F97316;"></div>
         </div>
@@ -413,34 +568,59 @@ onMounted(async () => {
 
       <!-- ─── 用户管理 ──────────────────────────────────────────────── -->
       <div v-if="activeTab==='users'">
-        <div class="flex gap-2 mb-4">
-          <input v-model="userQuery" class="input text-sm flex-1" placeholder="搜索用户名…" @keyup.enter="loadUsers(1)" />
+        <!-- 筛选栏 -->
+        <div class="flex gap-3 mb-4 flex-wrap items-center">
+          <CustomSelect
+            v-model="userRoleFilter"
+            :options="[
+              { value: '', label: '全部角色' },
+              { value: 'user', label: '普通用户' },
+              { value: 'creator', label: '创作者' },
+              { value: 'admin', label: '管理员' }
+            ]"
+            placeholder="全部角色"
+            @update:modelValue="loadUsers(1)"
+          />
+          
+          <CustomSelect
+            v-model="userBanFilter"
+            :options="[
+              { value: '', label: '全部状态' },
+              { value: '0', label: '正常' },
+              { value: '1', label: '已封禁' }
+            ]"
+            placeholder="全部状态"
+            @update:modelValue="loadUsers(1)"
+          />
+          
+          <input v-model="userQuery" class="input text-sm flex-1" style="min-width: 200px;" placeholder="搜索用户名…" @keyup.enter="loadUsers(1)" />
           <button class="btn-secondary text-sm" @click="loadUsers(1)">搜索</button>
         </div>
         <div v-if="usersLoading" class="flex justify-center py-12">
           <div class="w-8 h-8 rounded-full animate-spin" style="border:3px solid #FED7AA; border-top-color:#F97316;"></div>
         </div>
-        <div v-else class="flex flex-col gap-3">
+        <div v-else class="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div v-for="u in users" :key="u.id"
-            class="card p-4 flex flex-col sm:flex-row sm:items-center gap-3 cursor-pointer hover:brightness-95 transition-all duration-150"
+            class="card flex flex-col xl:flex-row p-4 items-start xl:items-center justify-between gap-4 cursor-pointer hover:brightness-95 transition-all"
             @click="loadUserDetail(u.id)"
           >
-            <img :src="u.avatar ? avatarUrl(u.discord_id, u.avatar) : avatarUrl(u.discord_id, null)"
-              class="w-9 h-9 rounded-full object-cover flex-shrink-0" style="border:2px solid #FDBA74;" />
-            <div class="flex-1 min-w-0">
-              <p class="font-bold text-sm" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ u.username }}</p>
-              <div class="flex items-center gap-2 mt-0.5">
-                <span v-if="u.is_banned" class="text-xs px-2 py-0.5 rounded-full border font-bold" style="background:#FEE2E2; color:#991B1B; border-color:#FCA5A5;">已封禁</span>
-                <p class="text-xs" style="color:#A8A29E; font-family:'Nunito',sans-serif;">注册于 {{ fmtDate(u.created_at) }}</p>
+            <div class="flex items-center gap-3 w-full xl:w-auto overflow-hidden">
+              <img :src="u.avatar ? avatarUrl(u.discord_id, u.avatar) : avatarUrl(u.discord_id, null)"
+                class="w-11 h-11 rounded-full object-cover flex-shrink-0" style="border:2px solid #FDBA74;" />
+              <div class="flex flex-col min-w-0">
+                <p class="font-bold text-sm truncate" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ u.username }}</p>
+                <div class="flex items-center gap-1.5 mt-1">
+                  <span class="text-xs px-1.5 py-0.5 rounded-full border font-bold flex-shrink-0" :style="roleStyle(u.role)">{{ roleLabel(u.role) }}</span>
+                  <span v-if="u.is_banned" class="text-xs px-1.5 py-0.5 rounded-full border font-bold flex-shrink-0" style="background:#FEE2E2; color:#991B1B; border-color:#FCA5A5;">已封禁</span>
+                </div>
               </div>
             </div>
-            <span class="text-xs px-2.5 py-1 rounded-full border font-bold" :style="roleStyle(u.role)">{{ roleLabel(u.role) }}</span>
-            <div class="flex gap-1.5 flex-wrap" @click.stop>
-              <button v-if="!u.is_banned" class="text-xs px-3 py-1.5 rounded-full font-bold cursor-pointer transition-all" style="background:#FEF9C3; color:#854D0E; border:1.5px solid #FDE047;" @click="changeBanStatus(u.id, true, u.username)">封禁</button>
-              <button v-else class="text-xs px-3 py-1.5 rounded-full font-bold cursor-pointer transition-all" style="background:#DCFCE7; color:#14532D; border:1.5px solid #22C55E;" @click="changeBanStatus(u.id, false, u.username)">解封</button>
-              <button v-if="u.role!=='creator'" class="text-xs px-3 py-1.5 rounded-full font-bold cursor-pointer transition-all" style="background:#DCFCE7; color:#14532D; border:1.5px solid #22C55E;" @click="changeRole(u.id,'creator')">设为创作者</button>
-              <button v-if="u.role!=='user'" class="text-xs px-3 py-1.5 rounded-full font-bold cursor-pointer transition-all" style="background:#F1F5F9; color:#475569; border:1.5px solid #CBD5E1;" @click="changeRole(u.id,'user')">重置为普通</button>
-              <button class="text-xs px-3 py-1.5 rounded-full font-bold cursor-pointer transition-all" style="background:#FEE2E2; color:#991B1B; border:1.5px solid #FCA5A5;" @click="deleteUser(u.id,u.username)">删除</button>
+            <div class="flex gap-1.5 flex-wrap flex-shrink-0 w-full xl:w-auto justify-end" @click.stop>
+              <button v-if="!u.is_banned" class="text-xs px-2.5 py-1.5 rounded-xl font-bold cursor-pointer transition-all whitespace-nowrap" style="background:#FEF9C3; color:#854D0E; border:1.5px solid #FDE047;" @click="changeBanStatus(u.id, true, u.username)">封禁</button>
+              <button v-else class="text-xs px-2.5 py-1.5 rounded-xl font-bold cursor-pointer transition-all whitespace-nowrap" style="background:#DCFCE7; color:#14532D; border:1.5px solid #22C55E;" @click="changeBanStatus(u.id, false, u.username)">解封</button>
+              <button v-if="u.role!=='creator'" class="text-xs px-2.5 py-1.5 rounded-xl font-bold cursor-pointer transition-all whitespace-nowrap" style="background:#DCFCE7; color:#14532D; border:1.5px solid #22C55E;" @click="changeRole(u.id,'creator')">升为创作者</button>
+              <button v-if="u.role!=='user'" class="text-xs px-2.5 py-1.5 rounded-xl font-bold cursor-pointer transition-all whitespace-nowrap" style="background:#F1F5F9; color:#475569; border:1.5px solid #CBD5E1;" @click="changeRole(u.id,'user')">降为普通</button>
+              <button class="text-xs px-2.5 py-1.5 rounded-xl font-bold cursor-pointer transition-all whitespace-nowrap" style="background:#FEE2E2; color:#991B1B; border:1.5px solid #FCA5A5;" @click="deleteUser(u.id,u.username)">删除</button>
             </div>
           </div>
         </div>
@@ -453,15 +633,36 @@ onMounted(async () => {
 
       <!-- ─── 模组管理 ──────────────────────────────────────────────── -->
       <div v-if="activeTab==='packs'">
-        <div class="flex gap-2 mb-4">
-          <input v-model="packQuery" class="input text-sm flex-1" placeholder="搜索模组标题…" @keyup.enter="loadPacks(1)" />
+        <!-- 筛选栏 -->
+        <div class="flex gap-3 mb-4 flex-wrap items-center">
+          <CustomSelect
+            v-model="packWorkshopFilter"
+            :options="[
+              { value: '', label: '全部工坊' },
+              ...availableWorkshops.filter(w => w.status === 'active').map(w => ({ value: String(w.id), label: w.name }))
+            ]"
+            placeholder="全部工坊"
+            @update:modelValue="loadPacks(1)"
+          />
+          
+          <CustomSelect
+            v-model="packSortFilter"
+            :options="[
+              { value: 'latest', label: '最新创建' },
+              { value: 'hot', label: '最热门' },
+              { value: 'entries', label: '最多条目' }
+            ]"
+            @update:modelValue="loadPacks(1)"
+          />
+          
+          <input v-model="packQuery" class="input text-sm flex-1" style="min-width: 200px;" placeholder="搜索模组标题…" @keyup.enter="loadPacks(1)" />
           <button class="btn-secondary text-sm" @click="loadPacks(1)">搜索</button>
         </div>
         <div v-if="packsLoading" class="flex justify-center py-12">
           <div class="w-8 h-8 rounded-full animate-spin" style="border:3px solid #FED7AA; border-top-color:#F97316;"></div>
         </div>
-        <div v-else class="flex flex-col gap-3">
-          <div v-for="p in packs" :key="p.id" class="card p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+        <div v-else class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div v-for="p in packs" :key="p.id" class="card flex-row p-4 items-center gap-3">
             <div class="flex-1 min-w-0">
               <p class="font-bold text-sm truncate" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ p.title }}</p>
               <p class="text-xs" style="color:#A8A29E; font-family:'Nunito',sans-serif;">
@@ -525,6 +726,9 @@ onMounted(async () => {
             </div>
           </div>
         </div>
+      </div>
+        
+        </main>
       </div>
     </div>
 
@@ -667,3 +871,41 @@ onMounted(async () => {
 
   </div>
 </template>
+
+<style scoped>
+/* 导航按钮样式 */
+.nav-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.625rem 1rem;
+  border-radius: 0.75rem;
+  font-family: 'Fredoka', sans-serif;
+  font-size: 0.875rem;
+  font-weight: 700;
+  text-align: left;
+  background: transparent;
+  color: #78350F;
+  border: none;
+  transition: all 0.15s;
+  cursor: pointer;
+}
+
+.nav-btn:hover {
+  background: #FFF7ED;
+  transform: translateX(2px);
+}
+
+.nav-btn.is-active {
+  background: #F97316;
+  color: white;
+  box-shadow: 3px 3px 0 #C2410C;
+  transform: translateX(2px);
+}
+
+.nav-icon {
+  width: 1.25rem;
+  height: 1.25rem;
+  flex-shrink: 0;
+}
+</style>
