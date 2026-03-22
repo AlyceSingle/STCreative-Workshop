@@ -1,19 +1,80 @@
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { useRoute, onBeforeRouteLeave } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useWorkshopStore } from '@/stores/workshop'
 import WorkshopPackCard from '@/components/WorkshopPackCard.vue'
 import { DEFAULT_TAGS } from '@/config/sections'
+import { readWorkshopViewState, writeWorkshopViewState } from '@/utils/workshopViewState'
 
-const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
 const workshopStore = useWorkshopStore()
 
+const DEFAULT_SORT = 'popular'
+const SEARCH_DEBOUNCE_MS = 400
+
+function getRouteQueryState() {
+  return {
+    workshop: typeof route.query.workshop === 'string' ? route.query.workshop : '',
+    q: typeof route.query.q === 'string' ? route.query.q : '',
+    mine: route.query.mine === '1' ? '1' : '',
+  }
+}
+
+function buildDefaultViewState() {
+  const routeQuery = getRouteQueryState()
+
+  return {
+    routeQuery,
+    searchInput: routeQuery.q,
+    activeSearch: routeQuery.q,
+    currentSort: DEFAULT_SORT,
+    activeTags: [],
+    page: 1,
+    scrollY: 0,
+    loadedKey: '',
+    reused: false,
+  }
+}
+
+function restoreWorkshopViewState() {
+  const defaultState = buildDefaultViewState()
+  const savedState = readWorkshopViewState()
+
+  if (!savedState) {
+    return defaultState
+  }
+
+  const savedQuery = savedState.routeQuery || {}
+  const routeQuery = defaultState.routeQuery
+  const sameContext =
+    (savedQuery.workshop || '') === routeQuery.workshop &&
+    (savedQuery.mine || '') === routeQuery.mine &&
+    (routeQuery.q ? (savedQuery.q || '') === routeQuery.q : true)
+
+  if (!sameContext) {
+    return defaultState
+  }
+
+  return {
+    routeQuery,
+    searchInput: savedState.searchInput || routeQuery.q,
+    activeSearch: savedState.activeSearch || routeQuery.q,
+    currentSort: savedState.currentSort || DEFAULT_SORT,
+    activeTags: Array.isArray(savedState.activeTags) ? [...savedState.activeTags] : [],
+    page: Number(savedState.page) > 0 ? Number(savedState.page) : 1,
+    scrollY: Number.isFinite(Number(savedState.scrollY)) ? Number(savedState.scrollY) : 0,
+    loadedKey: typeof savedState.loadedKey === 'string' ? savedState.loadedKey : '',
+    reused: true,
+  }
+}
+
+const restoredViewState = restoreWorkshopViewState()
+
 // ── 工坊 slug ──────────────────────────────────────────────────────────
 // null 表示显示全部工坊（不默认进入某个工坊）
-const workshopSlug = computed(() => route.query.workshop || null)
+const workshopSlug = computed(() => typeof route.query.workshop === 'string' ? route.query.workshop : null)
 
 const currentWorkshop = computed(() =>
   workshopStore.workshops.find(w => w.slug === workshopSlug.value) || null
@@ -30,17 +91,18 @@ function startEditWorldbook() {
   worldbookDraft.value = workshopStore.worldbookName
   worldbookEditing.value = true
 }
+
 function saveWorldbook() {
   const name = worldbookDraft.value.trim()
   if (!name) return
   workshopStore.setWorldbookName(workshopSlug.value || 'default', name)
   worldbookEditing.value = false
 }
+
 function cancelEditWorldbook() {
   worldbookEditing.value = false
 }
 
-// 恢复该工坊的默认世界书名称（来自工坊 worldbook 字段）
 function restoreDefaultWorldbook() {
   const defaultName = currentWorkshop.value?.worldbook
   if (!workshopSlug.value || !defaultName) return
@@ -48,27 +110,72 @@ function restoreDefaultWorldbook() {
   worldbookEditing.value = false
 }
 
-// ── 搜索（400ms debounce）————————————————————————————————————————————
-// 初始值读取 URL 中的 ?q= 参数（从主页弹窗跳转过来时自动填入）
-const searchInput = ref(String(route.query.q || ''))
-const activeSearch = ref(String(route.query.q || ''))
-// ?mine=1：仅展示当前登录用户自己的模组
+// ── 搜索（400ms debounce）─────────────────────────────────────────────
+const searchInput = ref(restoredViewState.searchInput)
+const activeSearch = ref(restoredViewState.activeSearch)
 const showMine = computed(() => route.query.mine === '1')
+const currentSort = ref(restoredViewState.currentSort)
+const activeTags = ref(restoredViewState.activeTags)
+const viewStateReady = ref(false)
+const pendingScrollY = ref(restoredViewState.scrollY)
+const initialPage = ref(restoredViewState.page)
+const lastLoadedKey = ref(restoredViewState.loadedKey)
 let debounceTimer = null
+
+function getCurrentLoadKey(page = workshopStore.pagination.page || initialPage.value || 1) {
+  return JSON.stringify({
+    workshop: workshopSlug.value || '',
+    search: activeSearch.value || '',
+    tag: activeTags.value.length === 1 ? activeTags.value[0] : '',
+    authorId: showMine.value ? authStore.user?.id || null : null,
+    sort: currentSort.value,
+    page,
+  })
+}
+
+function persistWorkshopViewState() {
+  writeWorkshopViewState({
+    routeQuery: getRouteQueryState(),
+    searchInput: searchInput.value,
+    activeSearch: activeSearch.value,
+    currentSort: currentSort.value,
+    activeTags: [...activeTags.value],
+    page: workshopStore.pagination.page || initialPage.value || 1,
+    scrollY: typeof window !== 'undefined' ? window.scrollY : 0,
+    loadedKey: lastLoadedKey.value,
+  })
+}
+
+function canReuseLoadedView(page = initialPage.value) {
+  return Boolean(
+    restoredViewState.reused &&
+    lastLoadedKey.value &&
+    lastLoadedKey.value === getCurrentLoadKey(page) &&
+    workshopStore.pagination.page === page &&
+    (workshopStore.pagination.total > 0 || workshopStore.packs.length > 0)
+  )
+}
+
+async function restoreScrollPosition() {
+  if (pendingScrollY.value <= 0) return
+  await nextTick()
+  window.scrollTo({ top: pendingScrollY.value, behavior: 'auto' })
+  pendingScrollY.value = 0
+}
+
 watch(searchInput, (val) => {
   clearTimeout(debounceTimer)
-  debounceTimer = setTimeout(() => { activeSearch.value = val.trim() }, 400)
+  debounceTimer = setTimeout(() => {
+    activeSearch.value = val.trim()
+  }, SEARCH_DEBOUNCE_MS)
 })
-
-// ── 排序 ──────────────────────────────────────────────────────────────
-const currentSort = ref('popular') // 'popular' | 'newest'
 
 // ── 动态映射 ──────────────────────────────────────────────────────────
 const activeWorldbookName = ref(null)
 const showMappingPanel = ref(false)
-const showMappingModal = ref(false)  // 控制大屏模态框
-const mappingSortKey = ref('order') // 'order' | 'depth' | 'uid' | 'name' | 'content'
-const mappingSortOrder = ref('asc') // 'asc' | 'desc'
+const showMappingModal = ref(false)
+const mappingSortKey = ref('order')
+const mappingSortOrder = ref('asc')
 
 const selectedMappingEntry = ref(null)
 const showEntryDetailModal = ref(false)
@@ -82,7 +189,7 @@ const sortedMappingEntries = computed(() => {
   const name = workshopStore.worldbookName
   const entries = workshopStore.worldbookEntriesMap[name]
   if (!entries || !entries.length) return []
-  
+
   return [...entries].sort((a, b) => {
     let res = 0
     if (mappingSortKey.value === 'order') {
@@ -103,7 +210,7 @@ const sortedMappingEntries = computed(() => {
 async function autoMapWorldbook() {
   const name = workshopStore.worldbookName
   if (!name || !workshopStore.stConnected) return
-  
+
   await workshopStore.fetchWorldbookEntries(name)
   if (workshopStore.worldbookEntriesMap[name]?.length > 0) {
     activeWorldbookName.value = name
@@ -111,7 +218,6 @@ async function autoMapWorldbook() {
   }
 }
 
-// 当连接到 ST 且进入了某个工坊（且世界书名变化）时，自动映射
 watch([() => workshopStore.stConnected, () => workshopStore.worldbookName], ([connected, name]) => {
   if (connected && name && workshopSlug.value) {
     autoMapWorldbook()
@@ -119,18 +225,16 @@ watch([() => workshopStore.stConnected, () => workshopStore.worldbookName], ([co
 }, { immediate: true })
 
 // ── Tag 多选过滤 ──────────────────────────────────────────────────────
-const activeTags = ref([])
-
-// 已加载的 packs 中出现的额外 tag（不含预设 4 个）
 const extraTags = computed(() => {
   const seen = new Set()
-  workshopStore.packs.forEach(p => {
-    (p.tags || []).forEach(t => {
-      if (!DEFAULT_TAGS.includes(t)) seen.add(t)
+  workshopStore.packs.forEach(pack => {
+    (pack.tags || []).forEach(tag => {
+      if (!DEFAULT_TAGS.includes(tag)) seen.add(tag)
     })
   })
   return [...seen]
 })
+
 const allFilterTags = computed(() => [...DEFAULT_TAGS, ...extraTags.value])
 
 function toggleTag(tag) {
@@ -146,24 +250,37 @@ function clearTags() {
   activeTags.value = []
 }
 
-// 在已加载的 packs 中做客户端多 tag 过滤（后端只支持单 tag）
 const filteredPacks = computed(() => {
   if (!activeTags.value.length) return workshopStore.packs
-  return workshopStore.packs.filter(p =>
-    activeTags.value.every(t => (p.tags || []).includes(t))
+  return workshopStore.packs.filter(pack =>
+    activeTags.value.every(tag => (pack.tags || []).includes(tag))
   )
+})
+
+const hasVisiblePacks = computed(() => filteredPacks.value.length > 0)
+const visiblePackSummary = computed(() => {
+  const total = workshopStore.pagination.total || workshopStore.packs.length
+  const visible = filteredPacks.value.length
+
+  if (activeSearch.value || activeTags.value.length) {
+    return `当前显示 ${visible} / ${total} 个模组`
+  }
+
+  return `共 ${total} 个模组`
 })
 
 // ── 登录 toast ────────────────────────────────────────────────────────
 const showLoginToast = ref(false)
+
 onMounted(() => {
   if (route.query.login === 'required') {
     showLoginToast.value = true
-    setTimeout(() => { showLoginToast.value = false }, 3000)
+    setTimeout(() => {
+      showLoginToast.value = false
+    }, 3000)
   }
 })
 
-// ST 扩展通知 toast（4.5s 自动消失）
 watch(() => workshopStore.stNotification, (notif) => {
   if (notif) {
     setTimeout(() => {
@@ -172,38 +289,99 @@ watch(() => workshopStore.stNotification, (notif) => {
   }
 })
 
-// ── 数据加载 ─────────────────────────────────────────────────────────
+watch(() => ({
+  routeQuery: getRouteQueryState(),
+  searchInput: searchInput.value,
+  activeSearch: activeSearch.value,
+  currentSort: currentSort.value,
+  activeTags: [...activeTags.value],
+  page: workshopStore.pagination.page,
+}), () => {
+  if (!viewStateReady.value) return
+  persistWorkshopViewState()
+}, { deep: true })
+
+// ── 数据加载 ──────────────────────────────────────────────────────────
 const isStEnv = computed(() => workshopStore.isSillyTavernEnv())
 
 async function load(page = 1) {
   await workshopStore.fetchPacks(page, {
     workshop: workshopSlug.value || undefined,
     search: activeSearch.value || undefined,
-    // 后端单 tag 过滤：若只选了一个 tag 则直接传给后端，多选时后端不过滤（客户端处理）
     tag: activeTags.value.length === 1 ? activeTags.value[0] : undefined,
-    // ?mine=1：仅显示当前用户自己的模组
     authorId: showMine.value ? authStore.user?.id : undefined,
     sort: currentSort.value,
   })
+
+  initialPage.value = page
+  lastLoadedKey.value = getCurrentLoadKey(page)
+
+  if (viewStateReady.value) {
+    persistWorkshopViewState()
+  }
 }
 
-// 工坊/搜索/mine/排序 变化时重新拉第 1 页（tag 变化只影响客户端过滤，不重新请求）
-watch([workshopSlug, activeSearch, showMine, currentSort], () => load(1))
+async function ensureWorkshopContext(force = false) {
+  await workshopStore.initStExtensionMode()
 
-// 工坊切换时重新加载对应世界书名称，并关闭编辑态
+  if (force || !workshopStore.workshops.length) {
+    await workshopStore.fetchWorkshops()
+  }
+
+  if (workshopSlug.value) {
+    workshopStore.loadWorldbookForSection(workshopSlug.value)
+  }
+}
+
+async function initializeWorkshopView() {
+  await ensureWorkshopContext()
+
+  const targetPage = initialPage.value > 0 ? initialPage.value : 1
+
+  if (canReuseLoadedView(targetPage)) {
+    viewStateReady.value = true
+    await restoreScrollPosition()
+    return
+  }
+
+  await load(targetPage)
+  viewStateReady.value = true
+  await workshopStore.scanSubscribedPacks()
+}
+
+async function refreshWorkshopView() {
+  await ensureWorkshopContext(true)
+  await load(workshopStore.pagination.page || 1)
+  await workshopStore.scanSubscribedPacks()
+
+  if (workshopStore.stConnected && workshopSlug.value) {
+    await autoMapWorldbook()
+  }
+}
+
+watch([workshopSlug, activeSearch, showMine, currentSort], async () => {
+  if (!viewStateReady.value) return
+  await load(1)
+})
+
 watch(workshopSlug, (newSlug) => {
-  if (newSlug) workshopStore.loadWorldbookForSection(newSlug)
+  if (newSlug) {
+    workshopStore.loadWorldbookForSection(newSlug)
+  }
   worldbookEditing.value = false
 })
 
 onMounted(async () => {
-  // ST 扩展模式初始化
-  await workshopStore.initStExtensionMode()
-  // 先加载工坊列表（loadWorldbookForSection 需要 workshops 数据作 fallback）
-  await workshopStore.fetchWorkshops()
-  if (workshopSlug.value) workshopStore.loadWorldbookForSection(workshopSlug.value)
-  await load(1)
-  await workshopStore.scanSubscribedPacks()
+  await initializeWorkshopView()
+})
+
+onBeforeRouteLeave(() => {
+  persistWorkshopViewState()
+})
+
+onBeforeUnmount(() => {
+  clearTimeout(debounceTimer)
+  persistWorkshopViewState()
 })
 
 async function goToPage(page) {
@@ -211,7 +389,6 @@ async function goToPage(page) {
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
-// 创建模组时携带当前工坊 workshop 参数
 const newModRoute = computed(() => ({
   name: 'workshop-pack-new',
   query: workshopSlug.value ? { workshop: workshopSlug.value } : {},
@@ -599,7 +776,7 @@ const newModRoute = computed(() => ({
     <!-- 搜索栏 + tag 过滤 -->
     <div class="flex flex-col gap-3 mb-6">
       <!-- 搜索输入与排序 -->
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-2 flex-wrap">
         <div class="relative flex-1">
           <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style="color:#A8A29E;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
@@ -616,29 +793,42 @@ const newModRoute = computed(() => ({
           <option value="popular">按热度排序</option>
           <option value="newest">按最新发布</option>
         </select>
+        <button
+          class="btn-secondary text-sm"
+          :disabled="workshopStore.loading"
+          @click="refreshWorkshopView"
+        >
+          刷新列表
+        </button>
       </div>
 
-      <!-- Tag 过滤 chips -->
-      <div class="flex flex-wrap gap-2">
-        <button
-          v-for="tag in allFilterTags"
-          :key="tag"
-          @click="toggleTag(tag)"
-          class="text-xs font-bold px-3 py-1 rounded-full transition-all duration-150"
-          :style="activeTags.includes(tag)
-            ? 'background:#F97316; color:white; border:2px solid #EA580C; box-shadow:2px 2px 0 #EA580C;'
-            : 'background:#FFF7ED; color:#78716C; border:2px solid #E7E5E4;'"
-        >
-          {{ tag }}
-        </button>
-        <button
-          v-if="activeTags.length"
-          @click="clearTags"
-          class="text-xs font-bold px-3 py-1 rounded-full transition-all duration-150"
-          style="background:#FEF2F2; color:#EF4444; border:2px solid #FECACA;"
-        >
-          ✕ 清除
-        </button>
+      <div class="flex items-center justify-between gap-3 flex-wrap">
+        <p class="text-xs font-bold" style="color:#A8A29E; font-family:'Nunito',sans-serif;">
+          {{ visiblePackSummary }}
+        </p>
+
+        <!-- Tag 过滤 chips -->
+        <div class="flex flex-wrap gap-2">
+          <button
+            v-for="tag in allFilterTags"
+            :key="tag"
+            @click="toggleTag(tag)"
+            class="text-xs font-bold px-3 py-1 rounded-full transition-all duration-150"
+            :style="activeTags.includes(tag)
+              ? 'background:#F97316; color:white; border:2px solid #EA580C; box-shadow:2px 2px 0 #EA580C;'
+              : 'background:#FFF7ED; color:#78716C; border:2px solid #E7E5E4;'"
+          >
+            {{ tag }}
+          </button>
+          <button
+            v-if="activeTags.length"
+            @click="clearTags"
+            class="text-xs font-bold px-3 py-1 rounded-full transition-all duration-150"
+            style="background:#FEF2F2; color:#EF4444; border:2px solid #FECACA;"
+          >
+            ✕ 清除
+          </button>
+        </div>
       </div>
     </div>
 
@@ -662,7 +852,7 @@ const newModRoute = computed(() => ({
 
     <!-- 空状态 -->
     <div
-      v-else-if="!workshopStore.packs.length"
+      v-else-if="!hasVisiblePacks"
       class="flex flex-col items-center justify-center py-20 gap-4"
     >
       <svg class="w-16 h-16 opacity-30" viewBox="0 0 64 64" fill="none" stroke="#F97316" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -674,7 +864,7 @@ const newModRoute = computed(() => ({
         {{ activeSearch || activeTags.length ? '没有匹配的模组' : '还没有任何模组' }}
       </p>
       <RouterLink
-        v-if="authStore.isLoggedIn && !activeSearch && !activeTags.length"
+        v-if="authStore.isLoggedIn && !activeSearch && !activeTags.length && !workshopStore.packs.length"
         :to="newModRoute"
         class="btn-primary text-sm"
       >

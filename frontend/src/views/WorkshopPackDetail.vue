@@ -5,6 +5,7 @@ import { useWorkshopStore } from '@/stores/workshop'
 import { useAuthStore } from '@/stores/auth'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import PackUpdateModal from '@/components/PackUpdateModal.vue'
+import { buildWorkshopBackRoute } from '@/utils/workshopViewState'
 
 const router = useRouter()
 const route = useRoute()
@@ -675,10 +676,7 @@ async function handleSyncUpdatesSelective(selectedEntryIds) {
 // 返回工坊时携带分区参数
 function goBackToWorkshop() {
   const slug = pack.value?.workshop?.slug || pack.value?.section || null
-  router.push({
-    name: 'workshop',
-    query: slug ? { workshop: slug } : {},
-  })
+  router.push(buildWorkshopBackRoute(slug ? { workshop: slug } : {}))
 }
 
 onMounted(async () => {
