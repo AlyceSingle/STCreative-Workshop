@@ -6,6 +6,49 @@ import CustomSelect from '../components/CustomSelect.vue'
 
 const router = useRouter()
 
+const TAB_STORAGE_KEY = 'admin_active_tab'
+const DEFAULT_TAB = 'applications'
+const VALID_TABS = ['applications', 'workshops', 'workshop-manage', 'users', 'packs']
+
+function isValidTab(tab) {
+  return VALID_TABS.includes(tab)
+}
+
+function getSavedTab() {
+  const savedTab = localStorage.getItem(TAB_STORAGE_KEY)
+  return isValidTab(savedTab) ? savedTab : DEFAULT_TAB
+}
+
+function saveActiveTab(tab) {
+  localStorage.setItem(TAB_STORAGE_KEY, tab)
+}
+
+function createLoadedTabsState() {
+  return {
+    applications: false,
+    workshops: false,
+    'workshop-manage': false,
+    users: false,
+    packs: false,
+  }
+}
+
+const loadedTabs = ref(createLoadedTabsState())
+
+function resetLoadedTabs() {
+  loadedTabs.value = createLoadedTabsState()
+}
+
+function markTabLoaded(tab) {
+  loadedTabs.value = {
+    ...loadedTabs.value,
+    [tab]: true,
+  }
+}
+
+function hasLoadedTab(tab) {
+  return Boolean(loadedTabs.value[tab])
+}
 
 // ── 管理员登录状态 ────────────────────────────────────────────────────
 const adminLoggedIn = ref(false)
@@ -15,8 +58,8 @@ const loginLoading = ref(false)
 
 async function checkLogin() {
   try {
-    await adminApi.checkLogin(); //axios会自动处理错误的http码
-    adminLoggedIn.value = true;
+    await adminApi.checkLogin()
+    adminLoggedIn.value = true
     localStorage.setItem('isAdmin', 'true')
   } catch {
     adminLoggedIn.value = false
@@ -31,10 +74,9 @@ async function doLogin() {
     await adminApi.login(loginForm.value.username, loginForm.value.password)
     adminLoggedIn.value = true
     localStorage.setItem('isAdmin', 'true')
-    activeTab.value = 'applications'
-    await loadApplications()
-  } catch {
-    loginError.value = '网络错误，请稍后再试'
+    await initializeAdminView()
+  } catch (err) {
+    loginError.value = err || '网络错误，请稍后再试'
   } finally {
     loginLoading.value = false
   }
@@ -44,27 +86,64 @@ async function doLogout() {
   await adminApi.logout()
   adminLoggedIn.value = false
   localStorage.removeItem('isAdmin')
+  resetLoadedTabs()
 }
 
 // ── Tab 切换 ──────────────────────────────────────────────────────────
-const activeTab = ref('applications')
+const activeTab = ref(getSavedTab())
 const sidebarOpen = ref(window.innerWidth >= 1024)
 
-function switchTab(tab) {
+function setActiveTab(tab) {
+  if (!isValidTab(tab)) return
   activeTab.value = tab
-  if (window.innerWidth < 1024) sidebarOpen.value = false // 手机端点击后自动收起
-  if (tab === 'applications') loadApplications()
-  else if (tab === 'users') loadUsers()
-  else if (tab === 'packs') loadPacks()
-  else if (tab === 'workshops') loadWorkshopApps() //TODO：函数未定义？
-  else if (tab === 'workshop-manage') loadAllWorkshops()
+  saveActiveTab(tab)
+  if (window.innerWidth < 1024) sidebarOpen.value = false
+}
+
+async function switchTab(tab) {
+  if (!isValidTab(tab)) return
+  setActiveTab(tab)
+  if (!hasLoadedTab(tab)) {
+    await loadTabData(tab)
+  }
+}
+
+async function loadTabData(tab) {
+  if (tab === 'applications') {
+    await loadApplications()
+    return
+  }
+
+  if (tab === 'workshops') {
+    await loadWorkshopApps()
+    return
+  }
+
+  if (tab === 'workshop-manage') {
+    await loadAllWorkshops()
+    return
+  }
+
+  if (tab === 'users') {
+    await loadUsers()
+    return
+  }
+
+  if (tab === 'packs') {
+    await refreshPacksView()
+  }
+}
+
+async function initializeAdminView() {
+  resetLoadedTabs()
+  await loadTabData(activeTab.value)
 }
 
 // ── 申请管理 ──────────────────────────────────────────────────────────
 const applications = ref([])
 const appFilter = ref('pending')
 const appLoading = ref(false)
-const reviewModal = ref(null)  // { app, action }
+const reviewModal = ref(null)
 const reviewNote = ref('')
 const reviewLoading = ref(false)
 
@@ -73,6 +152,7 @@ async function loadApplications() {
   try {
     const data = await adminApi.fetchApplications(appFilter.value)
     applications.value = data.data || []
+    markTabLoaded('applications')
   } catch {
     applications.value = []
   } finally {
@@ -110,14 +190,16 @@ async function loadUsers(page = 1) {
   usersLoading.value = true
   userPage.value = page
   try {
-    const params = new URLSearchParams({ page, limit: 20 })
-    if (userQuery.value) params.append('q', userQuery.value)
-    if (userRoleFilter.value) params.append('role', userRoleFilter.value)
-    if (userBanFilter.value) params.append('is_banned', userBanFilter.value)
-
-    const data = await adminApi.fetchUsers(page, userQuery.value)
+    const data = await adminApi.fetchUsers({
+      page,
+      limit: 20,
+      q: userQuery.value.trim(),
+      role: userRoleFilter.value,
+      is_banned: userBanFilter.value,
+    })
     users.value = data.data || []
     userPagination.value = data.pagination || {}
+    markTabLoaded('users')
   } catch {
     users.value = []
   } finally {
@@ -125,23 +207,27 @@ async function loadUsers(page = 1) {
   }
 }
 
+async function refreshUsersView() {
+  await loadUsers(userPage.value)
+}
+
 async function changeRole(userId, role) {
   if (!confirm(`确认将此用户角色改为「${roleLabel(role)}」？`)) return
   await adminApi.changeUserRole(userId, role)
-  await loadUsers(userPage.value)
+  await refreshUsersView()
 }
 
 async function deleteUser(userId, username) {
   if (!confirm(`确认删除用户「${username}」？此操作不可恢复，其所有模组也将被删除。`)) return
   await adminApi.deleteUser(userId)
-  await loadUsers(userPage.value)
+  await refreshUsersView()
 }
 
 async function changeBanStatus(userId, isBanned, username) {
   const action = isBanned ? '封禁' : '解封'
   if (!confirm(`确认${action}用户「${username}」？`)) return
   await adminApi.changeBanStatus(userId, isBanned)
-  await loadUsers(userPage.value)
+  await refreshUsersView()
 }
 
 // ── 模组管理 ──────────────────────────────────────────────────────────
@@ -152,19 +238,35 @@ const packQuery = ref('')
 const packWorkshopFilter = ref('')
 const packSortFilter = ref('latest')
 const packsLoading = ref(false)
+const availableWorkshops = ref([])
+const availableWorkshopsLoaded = ref(false)
+
+async function loadAvailableWorkshops(force = false) {
+  if (availableWorkshopsLoaded.value && !force) return
+  try {
+    const data = await adminApi.fetchAllWorkshops({ status: 'all' })
+    availableWorkshops.value = data.data || []
+    availableWorkshopsLoaded.value = true
+  } catch {
+    availableWorkshops.value = []
+    availableWorkshopsLoaded.value = false
+  }
+}
 
 async function loadPacks(page = 1) {
   packsLoading.value = true
   packPage.value = page
   try {
-    const params = new URLSearchParams({ page, limit: 20 })
-    if (packQuery.value) params.append('q', packQuery.value)
-    if (packWorkshopFilter.value) params.append('workshop_id', packWorkshopFilter.value)
-    if (packSortFilter.value) params.append('sort', packSortFilter.value)
-
-    const data = await adminApi.fetchPacks(page, packQuery.value)
+    const data = await adminApi.fetchPacks({
+      page,
+      limit: 20,
+      q: packQuery.value.trim(),
+      workshop_id: packWorkshopFilter.value,
+      sort: packSortFilter.value,
+    })
     packs.value = data.data || []
     packPagination.value = data.pagination || {}
+    markTabLoaded('packs')
   } catch {
     packs.value = []
   } finally {
@@ -172,46 +274,62 @@ async function loadPacks(page = 1) {
   }
 }
 
+async function refreshPacksView(page = packPage.value, forceWorkshops = false) {
+  await loadAvailableWorkshops(forceWorkshops)
+  await loadPacks(page)
+}
+
 async function deletePack(packId, title) {
   if (!confirm(`确认删除模组「${title}」？`)) return
   await adminApi.deletePack(packId)
-  await loadPacks(packPage.value)
+  await refreshPacksView(packPage.value)
 }
 
-// 工坊申请相关
+// ── 工坊申请 ──────────────────────────────────────────────────────────
 const workshopApps = ref([])
 const workshopAppFilter = ref('pending')
 const workshopAppsLoading = ref(false)
 
-// 工坊管理相关（合并后只保留一次定义）
+async function loadWorkshopApps() {
+  workshopAppsLoading.value = true
+  try {
+    const data = await adminApi.fetchWorkshopApplications({ status: workshopAppFilter.value })
+    workshopApps.value = data.data || []
+    markTabLoaded('workshops')
+  } catch {
+    workshopApps.value = []
+  } finally {
+    workshopAppsLoading.value = false
+  }
+}
+
+async function approveWorkshop(id) {
+  await adminApi.approveWorkshop(id)
+  await loadWorkshopApps()
+}
+
+async function rejectWorkshop(id) {
+  await adminApi.rejectWorkshop(id)
+  await loadWorkshopApps()
+}
+
+// ── 工坊管理 ──────────────────────────────────────────────────────────
 const allWorkshops = ref([])
 const workshopStatusFilter = ref('')
 const workshopTypeFilter = ref('')
 const allWorkshopsLoading = ref(false)
 const workshopQuery = ref('')
-const availableWorkshops = ref([])  // 用于模组筛选的工坊列表
-
-// 加载可用工坊（修复变量顺序错误）
-async function loadAvailableWorkshops() {
-  try {
-    const data = await adminApi.fetchWorkshopApplications(workshopAppFilter.value)
-    workshopApps.value = data.data || []
-    availableWorkshops.value = data.data || []
-  } catch {
-    availableWorkshops.value = []
-  }
-}
 
 async function loadAllWorkshops() {
   allWorkshopsLoading.value = true
   try {
-    const params = new URLSearchParams({ status: 'all' })
-    if (workshopStatusFilter.value) params.set('status', workshopStatusFilter.value)
-    if (workshopTypeFilter.value) params.append('type', workshopTypeFilter.value)
-    if (workshopQuery.value.trim()) params.append('search', workshopQuery.value.trim())
-
-    const data = await adminApi.fetchAllWorkshops(params)
+    const data = await adminApi.fetchAllWorkshops({
+      status: workshopStatusFilter.value || 'all',
+      type: workshopTypeFilter.value,
+      search: workshopQuery.value.trim(),
+    })
     allWorkshops.value = data.data || []
+    markTabLoaded('workshop-manage')
   } catch {
     allWorkshops.value = []
   } finally {
@@ -230,14 +348,10 @@ const userDetailLoading = ref(false)
 
 async function loadUserDetail(userId) {
   userDetailLoading.value = true
-  userDetail.value = { loading: true }  // 先打开弹窗显示加载态
+  userDetail.value = { loading: true }
   try {
     const data = await adminApi.fetchUserDetail(userId)
-    if (data) {
-      userDetail.value = data.data
-    } else {
-      userDetail.value = null
-    }
+    userDetail.value = data?.data || null
   } catch {
     userDetail.value = null
   } finally {
@@ -248,32 +362,35 @@ async function loadUserDetail(userId) {
 // ── 辅助 ──────────────────────────────────────────────────────────────
 const STATUS_MAP = { pending: '待审核', approved: '已通过', rejected: '已拒绝' }
 const STATUS_COLOR = {
-  pending:  'background:#FEF9C3; color:#854D0E; border-color:#EAB308;',
+  pending: 'background:#FEF9C3; color:#854D0E; border-color:#EAB308;',
   approved: 'background:#DCFCE7; color:#14532D; border-color:#22C55E;',
   rejected: 'background:#FEE2E2; color:#991B1B; border-color:#FCA5A5;',
 }
-function roleLabel(r) {
-  return { user: '普通用户', creator: '创作者', admin: '管理员' }[r] || r
+
+function roleLabel(role) {
+  return { user: '普通用户', creator: '创作者', admin: '管理员' }[role] || role
 }
-function roleStyle(r) {
-  if (r === 'admin')   return 'background:#FEE2E2; color:#991B1B; border-color:#FCA5A5;'
-  if (r === 'creator') return 'background:#DCFCE7; color:#14532D; border-color:#22C55E;'
+
+function roleStyle(role) {
+  if (role === 'admin') return 'background:#FEE2E2; color:#991B1B; border-color:#FCA5A5;'
+  if (role === 'creator') return 'background:#DCFCE7; color:#14532D; border-color:#22C55E;'
   return 'background:#F1F5F9; color:#475569; border-color:#CBD5E1;'
 }
+
 function avatarUrl(discordId, avatar) {
   if (avatar) return `https://cdn.discordapp.com/avatars/${discordId}/${avatar}.png`
   return `https://cdn.discordapp.com/embed/avatars/${parseInt(discordId) % 5}.png`
 }
-function fmtDate(d) {
-  if (!d) return '—'
-  return new Date(d).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
+
+function fmtDate(date) {
+  if (!date) return '—'
+  return new Date(date).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
 }
 
 onMounted(async () => {
   await checkLogin()
   if (adminLoggedIn.value) {
-    await loadApplications()
-    await loadAvailableWorkshops()  // 加载工坊列表供筛选使用
+    await initializeAdminView()
   }
 })
 </script>
@@ -305,7 +422,7 @@ onMounted(async () => {
     </div>
 
     <!-- ═══ 已登录：管理后台 ════════════════════════════════════════════ -->
-    <div v-else class="flex min-h-screen overflow-hidden" style="background:#FFFBF0;">
+    <div v-else class="flex min-h-screen overflow-x-hidden" style="background:#FFFBF0;">
 
       <!-- 移动端遮罩 -->
       <div v-if="sidebarOpen" class="fixed inset-0 z-30 lg:hidden" style="background:rgba(0,0,0,0.35);" @click="sidebarOpen = false"></div>
@@ -416,7 +533,7 @@ onMounted(async () => {
       </aside>
 
       <!-- 右侧主内容区 -->
-      <div class="flex-1 flex flex-col min-w-0 h-screen overflow-y-auto">
+      <div class="flex-1 flex flex-col min-w-0 h-screen overflow-y-auto overflow-x-hidden">
         <!-- 顶部控制栏 (包含折叠按钮) -->
         <div class="sticky top-0 z-20 px-4 py-3 lg:px-8 lg:py-6 flex items-center gap-4" style="background:rgba(255,251,240,0.9); backdrop-filter:blur(8px);">
           <button @click="sidebarOpen = !sidebarOpen" class="flex items-center justify-center w-10 h-10 flex-shrink-0 rounded-xl transition-colors cursor-pointer" style="background:#FFF7ED; border:2.5px solid #FDBA74; color:#F97316; box-shadow:2px 2px 0 #FDBA74;">
@@ -430,10 +547,14 @@ onMounted(async () => {
           <h2 class="text-xl font-bold lg:hidden" style="font-family:'Fredoka',sans-serif; color:#9A3412;">管理后台</h2>
         </div>
 
-        <main class="flex-1 px-4 pb-4 lg:px-8 lg:pb-8 max-w-7xl w-full mx-auto">
+        <main class="flex-1 px-4 pt-3 pb-4 lg:px-8 lg:pt-4 lg:pb-8 max-w-7xl w-full mx-auto">
 
       <!-- ─── 申请管理 ──────────────────────────────────────────────── -->
-      <div v-if="activeTab==='applications'">
+      <div v-show="activeTab==='applications'">
+        <div class="flex flex-col items-start justify-between gap-3 mb-5 sm:flex-row sm:items-center">
+          <h3 class="text-lg font-bold" style="font-family:'Fredoka',sans-serif; color:#431407;">申请管理</h3>
+          <button class="btn-secondary text-sm admin-refresh-btn" :disabled="appLoading" @click="loadApplications">刷新列表</button>
+        </div>
         <div class="flex gap-2 mb-4 flex-wrap">
           <button v-for="f in [{k:'pending',l:'待审核'},{k:'approved',l:'已通过'},{k:'rejected',l:'已拒绝'},{k:'all',l:'全部'}]" :key="f.k"
             class="px-4 py-1.5 rounded-full text-xs font-bold transition-all"
@@ -446,8 +567,8 @@ onMounted(async () => {
           <div class="w-8 h-8 rounded-full animate-spin" style="border:3px solid #FED7AA; border-top-color:#F97316;"></div>
         </div>
         <div v-else-if="!applications.length" class="text-center py-12 text-sm" style="color:#A8A29E; font-family:'Nunito',sans-serif;">暂无记录</div>
-        <div v-else class="flex flex-col gap-3">
-          <div v-for="app in applications" :key="app.id" class="card p-4 flex flex-col sm:flex-row sm:items-start gap-4">
+        <div v-else class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+          <div v-for="app in applications" :key="app.id" class="card h-full p-4 flex flex-col sm:flex-row sm:items-start gap-4">
             <img :src="app.user.avatar ? avatarUrl(app.user.discord_id, app.user.avatar) : avatarUrl(app.user.discord_id, null)"
               class="w-10 h-10 rounded-full object-cover flex-shrink-0" style="border:2px solid #FDBA74;" />
             <div class="flex-1 min-w-0">
@@ -476,7 +597,11 @@ onMounted(async () => {
       </div>
 
       <!-- ─── 工坊管理 ──────────────────────────────────────────────── -->
-      <div v-if="activeTab==='workshop-manage'">
+      <div v-show="activeTab==='workshop-manage'">
+        <div class="flex flex-col items-start justify-between gap-3 mb-5 sm:flex-row sm:items-center">
+          <h3 class="text-lg font-bold" style="font-family:'Fredoka',sans-serif; color:#431407;">工坊管理</h3>
+          <button class="btn-secondary text-sm admin-refresh-btn" :disabled="allWorkshopsLoading" @click="loadAllWorkshops">刷新列表</button>
+        </div>
         <!-- 筛选栏 -->
         <div class="flex gap-3 mb-4 flex-wrap items-center">
           <CustomSelect
@@ -507,8 +632,8 @@ onMounted(async () => {
           <div class="w-8 h-8 rounded-full animate-spin" style="border:3px solid #FED7AA; border-top-color:#F97316;"></div>
         </div>
         <div v-else-if="!allWorkshops.length" class="text-center py-12 text-sm" style="color:#A8A29E; font-family:'Nunito',sans-serif;">暂无工坊</div>
-        <div v-else class="flex flex-col gap-3">
-          <div v-for="w in allWorkshops" :key="w.id" class="card p-4 flex flex-col sm:flex-row sm:items-start gap-4">
+        <div v-else class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+          <div v-for="w in allWorkshops" :key="w.id" class="card h-full p-4 flex flex-col sm:flex-row sm:items-start gap-4">
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2 flex-wrap mb-1">
                 <span class="font-bold text-base" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ w.name }}</span>
@@ -524,16 +649,25 @@ onMounted(async () => {
               </p>
               <p v-if="w.description" class="text-sm rounded-xl px-3 py-2 mt-1 whitespace-pre-line" style="background:#FFFBF0; border:1.5px solid #FED7AA; color:#78350F; font-family:'Nunito',sans-serif; word-break:break-word; white-space:pre-line;">{{ w.description }}</p>
             </div>
-            <div class="flex flex-col gap-2 flex-shrink-0 sm:w-24">
-              <button v-if="w.author_id !== null" class="btn-secondary text-xs px-3 py-1.5 w-full text-center" @click="router.push({ name: 'workshop-edit', params: { id: w.id } })">编辑</button>
-              <button v-if="w.author_id !== null" class="btn-danger text-xs px-3 py-1.5 w-full text-center" @click="deleteWorkshop(w.id, w.name)">删除</button>
+            <div class="flex flex-col gap-2 flex-shrink-0 w-full sm:w-28">
+              <template v-if="w.author_id !== null">
+                <button class="btn-secondary text-xs px-3 py-1.5 w-full text-center" @click="router.push({ name: 'workshop-edit', params: { id: w.id } })">编辑</button>
+                <button class="btn-danger text-xs px-3 py-1.5 w-full text-center" @click="deleteWorkshop(w.id, w.name)">删除</button>
+              </template>
+              <div v-else class="rounded-2xl px-3 py-2 text-center text-xs font-bold" style="background:#FFF7ED; color:#A16207; border:1.5px dashed #F59E0B;">
+                内置工坊不可编辑
+              </div>
             </div>
           </div>
         </div>
       </div>
 
       <!-- ─── 用户管理 ──────────────────────────────────────────────── -->
-      <div v-if="activeTab==='users'">
+      <div v-show="activeTab==='users'">
+        <div class="flex flex-col items-start justify-between gap-3 mb-5 sm:flex-row sm:items-center">
+          <h3 class="text-lg font-bold" style="font-family:'Fredoka',sans-serif; color:#431407;">用户管理</h3>
+          <button class="btn-secondary text-sm admin-refresh-btn" :disabled="usersLoading" @click="refreshUsersView">刷新列表</button>
+        </div>
         <!-- 筛选栏 -->
         <div class="flex gap-3 mb-4 flex-wrap items-center">
           <CustomSelect
@@ -598,7 +732,11 @@ onMounted(async () => {
       </div>
 
       <!-- ─── 模组管理 ──────────────────────────────────────────────── -->
-      <div v-if="activeTab==='packs'">
+      <div v-show="activeTab==='packs'">
+        <div class="flex flex-col items-start justify-between gap-3 mb-5 sm:flex-row sm:items-center">
+          <h3 class="text-lg font-bold" style="font-family:'Fredoka',sans-serif; color:#431407;">模组管理</h3>
+          <button class="btn-secondary text-sm admin-refresh-btn" :disabled="packsLoading" @click="refreshPacksView(packPage, true)">刷新列表</button>
+        </div>
         <!-- 筛选栏 -->
         <div class="flex gap-3 mb-4 flex-wrap items-center">
           <CustomSelect
@@ -653,7 +791,11 @@ onMounted(async () => {
       </div>
 
       <!-- ─── 工坊申请 ──────────────────────────────────────────────── -->
-      <div v-if="activeTab==='workshops'">
+      <div v-show="activeTab==='workshops'">
+        <div class="flex flex-col items-start justify-between gap-3 mb-5 sm:flex-row sm:items-center">
+          <h3 class="text-lg font-bold" style="font-family:'Fredoka',sans-serif; color:#431407;">工坊申请</h3>
+          <button class="btn-secondary text-sm admin-refresh-btn" :disabled="workshopAppsLoading" @click="loadWorkshopApps">刷新列表</button>
+        </div>
         <div class="flex gap-2 mb-4 flex-wrap">
           <button v-for="f in [{k:'pending',l:'待审核'},{k:'active',l:'已通过'},{k:'rejected',l:'已拒绝'},{k:'all',l:'全部'}]" :key="f.k"
             class="px-4 py-1.5 rounded-full text-xs font-bold transition-all"
@@ -666,8 +808,8 @@ onMounted(async () => {
           <div class="w-8 h-8 rounded-full animate-spin" style="border:3px solid #FED7AA; border-top-color:#F97316;"></div>
         </div>
         <div v-else-if="!workshopApps.length" class="text-center py-12 text-sm" style="color:#A8A29E; font-family:'Nunito',sans-serif;">暂无记录</div>
-        <div v-else class="flex flex-col gap-3">
-          <div v-for="w in workshopApps" :key="w.id" class="card p-4 flex flex-col sm:flex-row sm:items-start gap-4">
+        <div v-else class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+          <div v-for="w in workshopApps" :key="w.id" class="card h-full p-4 flex flex-col sm:flex-row sm:items-start gap-4">
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2 flex-wrap mb-1">
                 <span class="font-bold text-base" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ w.name }}</span>
@@ -873,5 +1015,30 @@ onMounted(async () => {
   width: 1.25rem;
   height: 1.25rem;
   flex-shrink: 0;
+}
+
+.admin-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  min-height: 2.75rem;
+  padding: 0.65rem 1.15rem;
+  white-space: nowrap;
+  line-height: 1.2;
+  color: #EA580C;
+  background: #FFFBF0;
+  border: 2.5px solid #EA580C;
+  border-radius: 999px;
+  transform: none;
+  box-shadow: none;
+}
+
+.admin-refresh-btn:hover {
+  color: #C2410C;
+  background: #FFF7ED;
+  border-color: #C2410C;
+  transform: none;
+  box-shadow: none;
 }
 </style>

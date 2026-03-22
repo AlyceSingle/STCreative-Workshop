@@ -1,5 +1,19 @@
 import request from '@/utils/request'
 
+function buildQuery(params = {}) {
+  const searchParams = params instanceof URLSearchParams ? params : new URLSearchParams()
+
+  if (!(params instanceof URLSearchParams)) {
+    Object.entries(params).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === '') return
+      searchParams.append(key, String(value))
+    })
+  }
+
+  const query = searchParams.toString()
+  return query ? `?${query}` : ''
+}
+
 async function checkLogin() {
   return request.get('/api/admin/me')
 }
@@ -13,16 +27,15 @@ async function logout() {
 }
 
 async function fetchApplications(status = 'pending') {
-  return request.get(`/api/admin/applications?status=${status}`)
+  return request.get(`/api/admin/applications${buildQuery({ status })}`)
 }
 
 async function reviewApplication(appId, action, note = '') {
   return request.put(`/api/admin/applications/${appId}`, { action, note })
 }
 
-async function fetchUsers(page = 1, query = '') {
-  const q = query ? `&q=${encodeURIComponent(query)}` : ''
-  return request.get(`/api/admin/users?page=${page}&limit=20${q}`)
+async function fetchUsers(params = {}) {
+  return request.get(`/api/admin/users${buildQuery({ page: 1, limit: 20, ...params })}`)
 }
 
 async function changeUserRole(userId, role) {
@@ -41,17 +54,16 @@ async function fetchUserDetail(userId) {
   return request.get(`/api/admin/users/${userId}/detail`)
 }
 
-async function fetchPacks(page = 1, query = '') {
-  const q = query ? `&q=${encodeURIComponent(query)}` : ''
-  return request.get(`/api/admin/packs?page=${page}&limit=20${q}`)
+async function fetchPacks(params = {}) {
+  return request.get(`/api/admin/packs${buildQuery({ page: 1, limit: 20, sort: 'latest', ...params })}`)
 }
 
 async function deletePack(packId) {
   return request.delete(`/api/admin/packs/${packId}`)
 }
 
-async function fetchWorkshopApplications(status = 'pending') {
-  return request.get(`/api/admin/workshops?status=${status}`)
+async function fetchWorkshopApplications(params = {}) {
+  return request.get(`/api/admin/workshops${buildQuery({ status: 'pending', ...params })}`)
 }
 
 async function approveWorkshop(id) {
@@ -62,8 +74,8 @@ async function rejectWorkshop(id) {
   return request.post(`/api/admin/workshops/${id}/reject`)
 }
 
-async function fetchAllWorkshops() {
-  return request.get('/api/admin/workshops?status=all')
+async function fetchAllWorkshops(params = {}) {
+  return request.get(`/api/admin/workshops${buildQuery({ status: 'all', ...params })}`)
 }
 
 async function deleteWorkshop(id) {
