@@ -361,14 +361,14 @@ const newModRoute = computed(() => ({
           class="text-xs font-bold px-2.5 py-1 rounded-full"
           style="background:#DCFCE7; color:#16A34A; border:1.5px solid #22C55E; font-family:'Nunito',sans-serif;"
         >
-          ⚡ 已连接到 SillyTavern 扩展
+          已连接到 SillyTavern 扩展
         </span>
         <span
           v-else
           class="text-xs font-bold px-2.5 py-1 rounded-full"
           style="background:#FEF2F2; color:#EF4444; border:1.5px solid #FECACA; font-family:'Nunito',sans-serif;"
         >
-          ⚠ 未连接到 SillyTavern 扩展
+          未连接到 SillyTavern 扩展
         </span>
       </div>
     </div>

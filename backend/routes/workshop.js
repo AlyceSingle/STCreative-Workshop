@@ -1,9 +1,15 @@
 const express = require('express');
 const router = express.Router();
+const crypto = require('crypto');
 const { getDb } = require('../db/init');
 const { requireAuth, optionalAuth } = require('../middleware/auth');
 
 // ── 辅助函数 ────────────────────────────────────────────────────────
+
+// 计算数据哈希值（用于快速判断数据是否改变）
+function computeHash(data) {
+  return crypto.createHash('md5').update(JSON.stringify(data)).digest('hex');
+}
 
 // 格式化用户头像 URL
 function avatarUrl(discordId, avatar) {
@@ -82,7 +88,30 @@ function formatEntry(row) {
     effect_cooldown: row.effect_cooldown || null,
     effect_delay: row.effect_delay || null,
     created_at: row.created_at,
+    // Phase 2: 版本控制字段
+    version: row.version || 1,
+    updated_at: row.updated_at || row.created_at,
+    is_deleted: !!row.is_deleted,
   };
+}
+
+// 创建条目版本快照（在修改或删除前调用）
+// Phase 2.1 优化：只保留元数据（entry_id, version, entry_type, created_by）
+// 滚动窗口策略：每个条目只保留1个历史快照，新快照创建时删除旧快照
+function createEntryVersionSnapshot(db, entry, userId) {
+  // 1. 删除该条目的所有旧快照（保持只有1个历史快照）
+  db.prepare(`DELETE FROM entry_versions WHERE entry_id = ?`).run(entry.id);
+  
+  // 2. 插入当前版本的精简快照（只保留元数据）
+  db.prepare(`
+    INSERT INTO entry_versions (entry_id, version, entry_type, created_by)
+    VALUES (?, ?, ?, ?)
+  `).run(
+    entry.id,
+    entry.version || 1,
+    entry.entry_type || 'worldbook',
+    userId
+  );
 }
 
 // 枚举校验常量
@@ -253,10 +282,10 @@ router.get('/', optionalAuth, (req, res) => {
   const rows = db.prepare(`
     SELECT p.*,
            u.username, u.avatar, u.discord_id, u.display_name,
-           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id) AS entry_count, 
-           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND e.entry_type='worldbook') AS count_worldbook,
-           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND e.entry_type='regex') AS count_regex,
-           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND e.entry_type='greeting') AS count_greeting,
+           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND (e.is_deleted = 0 OR e.is_deleted IS NULL)) AS entry_count, 
+           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND e.entry_type='worldbook' AND (e.is_deleted = 0 OR e.is_deleted IS NULL)) AS count_worldbook,
+           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND e.entry_type='regex' AND (e.is_deleted = 0 OR e.is_deleted IS NULL)) AS count_regex,
+           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND e.entry_type='greeting' AND (e.is_deleted = 0 OR e.is_deleted IS NULL)) AS count_greeting,
            w.id as w_id, w.slug as w_slug, w.name as w_name
     FROM workshop_packs p
     JOIN users u ON p.author_id = u.id
@@ -284,8 +313,12 @@ router.get('/', optionalAuth, (req, res) => {
 
   const data = rows.map((row) => formatPack(row, likedSet.has(row.id), subbedSet.has(row.id)));
 
+  // 计算数据哈希值（用于前端判断是否需要更新）
+  const dataHash = computeHash(data);
+
   res.json({
     data,
+    hash: dataHash,
     pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
   });
 });
@@ -300,10 +333,10 @@ router.get('/packs/:packId', optionalAuth, (req, res) => {
   const row = db.prepare(`
     SELECT p.*,
            u.username, u.avatar, u.discord_id, u.display_name,
-           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id) AS entry_count, 
-           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND e.entry_type='worldbook') AS count_worldbook,
-           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND e.entry_type='regex') AS count_regex,
-           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND e.entry_type='greeting') AS count_greeting,
+           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND (e.is_deleted = 0 OR e.is_deleted IS NULL)) AS entry_count, 
+           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND e.entry_type='worldbook' AND (e.is_deleted = 0 OR e.is_deleted IS NULL)) AS count_worldbook,
+           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND e.entry_type='regex' AND (e.is_deleted = 0 OR e.is_deleted IS NULL)) AS count_regex,
+           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND e.entry_type='greeting' AND (e.is_deleted = 0 OR e.is_deleted IS NULL)) AS count_greeting,
            w.id as w_id, w.slug as w_slug, w.name as w_name
     FROM workshop_packs p
     JOIN users u ON p.author_id = u.id
@@ -320,8 +353,11 @@ router.get('/packs/:packId', optionalAuth, (req, res) => {
     isSubscribed = !!db.prepare(`SELECT 1 FROM workshop_subscriptions WHERE user_id = ? AND pack_id = ?`).get(userId, packId);
   }
 
+  // 只返回未删除的条目
   const entries = db.prepare(`
-    SELECT * FROM workshop_entries WHERE pack_id = ? ORDER BY position_order ASC, id ASC
+    SELECT * FROM workshop_entries 
+    WHERE pack_id = ? AND (is_deleted = 0 OR is_deleted IS NULL)
+    ORDER BY position_order ASC, id ASC
   `).all(packId);
 
   res.json({
@@ -482,12 +518,16 @@ router.get('/my-subscriptions', requireAuth, (req, res) => {
     const rows = db.prepare(`
       SELECT p.*,
              u.username, u.avatar, u.discord_id, u.display_name,
-             (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id) AS entry_count, 
-           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND e.entry_type='worldbook') AS count_worldbook,
-           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND e.entry_type='regex') AS count_regex,
-           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND e.entry_type='greeting') AS count_greeting,
+             (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND (e.is_deleted = 0 OR e.is_deleted IS NULL)) AS entry_count, 
+           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND e.entry_type='worldbook' AND (e.is_deleted = 0 OR e.is_deleted IS NULL)) AS count_worldbook,
+           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND e.entry_type='regex' AND (e.is_deleted = 0 OR e.is_deleted IS NULL)) AS count_regex,
+           (SELECT COUNT(*) FROM workshop_entries e WHERE e.pack_id = p.id AND e.entry_type='greeting' AND (e.is_deleted = 0 OR e.is_deleted IS NULL)) AS count_greeting,
              w.id as w_id, w.slug as w_slug, w.name as w_name,
-             s.created_at as subscribed_at
+             s.created_at as subscribed_at,
+             s.selected_entry_ids,
+             s.worldbook_name,
+             s.last_synced_at,
+             s.synced_version_map
       FROM workshop_subscriptions s
       JOIN workshop_packs p ON s.pack_id = p.id
       JOIN users u ON p.author_id = u.id
@@ -499,6 +539,11 @@ router.get('/my-subscriptions', requireAuth, (req, res) => {
     const data = rows.map(row => ({
       ...formatPack(row, false, true),
       subscribed_at: row.subscribed_at,
+      // Phase 2: 条目级别订阅信息
+      selected_entry_ids: JSON.parse(row.selected_entry_ids || '[]'),
+      worldbook_name: row.worldbook_name || '',
+      last_synced_at: row.last_synced_at || null,
+      synced_version_map: JSON.parse(row.synced_version_map || '{}'),
     }));
 
     res.json({ data });
@@ -517,7 +562,25 @@ router.post('/packs/:packId/subscribe', requireAuth, (req, res) => {
   const pack = db.prepare(`SELECT id FROM workshop_packs WHERE id = ?`).get(packId);
   if (!pack) return res.status(404).json({ error: '模组不存在' });
 
-  const { action } = req.body || {};
+  const { action, selected_entry_ids, worldbook_name } = req.body || {};
+
+  // 验证 selected_entry_ids 数组
+  const entryIds = Array.isArray(selected_entry_ids) 
+    ? selected_entry_ids.map(id => parseInt(id)).filter(id => !isNaN(id))
+    : [];
+  const entryIdsJson = JSON.stringify(entryIds);
+  const worldbookNameVal = String(worldbook_name || '').trim();
+  
+  // 生成当前版本映射：查询选中条目的当前版本号
+  const versionMap = {};
+  if (entryIds.length > 0) {
+    const placeholders = entryIds.map(() => '?').join(',');
+    const entries = db.prepare(`SELECT id, version FROM workshop_entries WHERE id IN (${placeholders})`).all(...entryIds);
+    for (const entry of entries) {
+      versionMap[entry.id] = entry.version || 1;
+    }
+  }
+  const versionMapJson = JSON.stringify(versionMap);
 
   try {
     const toggleSub = db.transaction(() => {
@@ -525,8 +588,19 @@ router.post('/packs/:packId/subscribe', requireAuth, (req, res) => {
       
       if (action === 'subscribe') {
         if (!existing) {
-          db.prepare(`INSERT INTO workshop_subscriptions (user_id, pack_id) VALUES (?, ?)`).run(req.user.id, packId);
+          // 新订阅：插入带条目级别信息的记录
+          db.prepare(`
+            INSERT INTO workshop_subscriptions (user_id, pack_id, selected_entry_ids, worldbook_name, synced_version_map, last_synced_at) 
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+          `).run(req.user.id, packId, entryIdsJson, worldbookNameVal, versionMapJson);
           db.prepare(`UPDATE workshop_packs SET sub_count = sub_count + 1 WHERE id = ?`).run(packId);
+        } else {
+          // 更新现有订阅（重新同步）
+          db.prepare(`
+            UPDATE workshop_subscriptions 
+            SET selected_entry_ids = ?, worldbook_name = ?, synced_version_map = ?, last_synced_at = CURRENT_TIMESTAMP
+            WHERE user_id = ? AND pack_id = ?
+          `).run(entryIdsJson, worldbookNameVal, versionMapJson, req.user.id, packId);
         }
         return true;
       }
@@ -539,13 +613,16 @@ router.post('/packs/:packId/subscribe', requireAuth, (req, res) => {
         return false;
       }
 
-      // Default toggle behavior
+      // Default toggle behavior（向后兼容）
       if (existing) {
         db.prepare(`DELETE FROM workshop_subscriptions WHERE user_id = ? AND pack_id = ?`).run(req.user.id, packId);
         db.prepare(`UPDATE workshop_packs SET sub_count = MAX(0, sub_count - 1) WHERE id = ?`).run(packId);
         return false;
       } else {
-        db.prepare(`INSERT INTO workshop_subscriptions (user_id, pack_id) VALUES (?, ?)`).run(req.user.id, packId);
+        db.prepare(`
+          INSERT INTO workshop_subscriptions (user_id, pack_id, selected_entry_ids, worldbook_name, synced_version_map, last_synced_at) 
+          VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        `).run(req.user.id, packId, entryIdsJson, worldbookNameVal, versionMapJson);
         db.prepare(`UPDATE workshop_packs SET sub_count = sub_count + 1 WHERE id = ?`).run(packId);
         return true;
       }
@@ -556,6 +633,188 @@ router.post('/packs/:packId/subscribe', requireAuth, (req, res) => {
     res.json({ subscribed, sub_count: row.sub_count });
   } catch (err) {
     console.error('[Workshop] 订阅操作失败:', err);
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
+
+// POST /api/workshop/packs/:packId/sync — 同步更新（应用所有变更到订阅记录）
+router.post('/packs/:packId/sync', requireAuth, (req, res) => {
+  const db = getDb();
+  const packId = parseInt(req.params.packId);
+  if (isNaN(packId)) return res.status(400).json({ error: '无效的模组 ID' });
+
+  const pack = db.prepare(`SELECT id FROM workshop_packs WHERE id = ?`).get(packId);
+  if (!pack) return res.status(404).json({ error: '模组不存在' });
+
+  // 获取用户订阅
+  const subscription = db.prepare(`
+    SELECT selected_entry_ids, synced_version_map 
+    FROM workshop_subscriptions 
+    WHERE user_id = ? AND pack_id = ?
+  `).get(req.user.id, packId);
+
+  if (!subscription) {
+    return res.status(400).json({ error: '您尚未订阅此模组' });
+  }
+
+  const { worldbook_name } = req.body || {};
+  const worldbookNameVal = String(worldbook_name || '').trim();
+
+  try {
+    // 获取模组当前所有活跃条目
+    const activeEntries = db.prepare(`
+      SELECT id, version FROM workshop_entries 
+      WHERE pack_id = ? AND (is_deleted = 0 OR is_deleted IS NULL)
+    `).all(packId);
+
+    // 构建新的选中条目 ID 列表和版本映射
+    const newSelectedIds = activeEntries.map(e => e.id);
+    const newVersionMap = {};
+    activeEntries.forEach(e => {
+      newVersionMap[String(e.id)] = e.version || 1;
+    });
+
+    // 更新订阅记录
+    db.prepare(`
+      UPDATE workshop_subscriptions 
+      SET selected_entry_ids = ?, synced_version_map = ?, worldbook_name = ?, last_synced_at = CURRENT_TIMESTAMP
+      WHERE user_id = ? AND pack_id = ?
+    `).run(
+      JSON.stringify(newSelectedIds),
+      JSON.stringify(newVersionMap),
+      worldbookNameVal,
+      req.user.id,
+      packId
+    );
+
+    res.json({
+      success: true,
+      message: '同步成功',
+      selected_entry_ids: newSelectedIds,
+      synced_version_map: newVersionMap,
+    });
+  } catch (err) {
+    console.error('[Workshop] 同步失败:', err);
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
+
+// POST /api/workshop/packs/:packId/sync-selective — 选择性同步更新（仅更新指定条目）
+router.post('/packs/:packId/sync-selective', requireAuth, (req, res) => {
+  const db = getDb();
+  const packId = parseInt(req.params.packId);
+  if (isNaN(packId)) return res.status(400).json({ error: '无效的模组 ID' });
+
+  const pack = db.prepare(`SELECT id FROM workshop_packs WHERE id = ?`).get(packId);
+  if (!pack) return res.status(404).json({ error: '模组不存在' });
+
+  // 获取用户订阅
+  const subscription = db.prepare(`
+    SELECT selected_entry_ids, synced_version_map 
+    FROM workshop_subscriptions 
+    WHERE user_id = ? AND pack_id = ?
+  `).get(req.user.id, packId);
+
+  if (!subscription) {
+    return res.status(400).json({ error: '您尚未订阅此模组' });
+  }
+
+  const { entry_ids, worldbook_name } = req.body || {};
+  
+  if (!Array.isArray(entry_ids)) {
+    return res.status(400).json({ error: '参数 entry_ids 必须是数组' });
+  }
+
+  const worldbookNameVal = String(worldbook_name || '').trim();
+
+  try {
+    // 解析当前订阅状态
+    const selectedIds = JSON.parse(subscription.selected_entry_ids || '[]');
+    const syncedVersions = JSON.parse(subscription.synced_version_map || '{}');
+    const selectedIdSet = new Set(selectedIds.map(id => Number(id)));
+
+    // 获取模组所有条目（包括已删除的）
+    const allEntries = db.prepare(`
+      SELECT * FROM workshop_entries WHERE pack_id = ?
+    `).all(packId);
+
+    // 构建条目映射
+    const entryMap = {};
+    allEntries.forEach(entry => {
+      entryMap[entry.id] = entry;
+    });
+
+    // 分类用户选择的条目
+    const changesApplied = {
+      new: [],       // 新增的条目（完整数据）
+      modified: [],  // 修改的条目（完整数据）
+      deleted: []    // 删除的条目ID
+    };
+
+    // 新的 selected_entry_ids 和 synced_version_map
+    const newSelectedIds = [...selectedIds];
+    const newSyncedVersions = { ...syncedVersions };
+
+    // 遍历用户选中的条目ID
+    for (const entryId of entry_ids) {
+      const entryIdNum = Number(entryId);
+      const entry = entryMap[entryIdNum];
+
+      if (!entry) continue; // 条目不存在，跳过
+
+      const currentVersion = entry.version || 1;
+      const syncedVersion = syncedVersions[String(entryIdNum)];
+      const wasSelected = selectedIdSet.has(entryIdNum);
+
+      if (entry.is_deleted) {
+        // 用户选择删除此条目
+        if (wasSelected) {
+          // 从订阅列表移除
+          const index = newSelectedIds.indexOf(entryIdNum);
+          if (index !== -1) {
+            newSelectedIds.splice(index, 1);
+          }
+          delete newSyncedVersions[String(entryIdNum)];
+          changesApplied.deleted.push(entryIdNum);
+        }
+      } else if (!wasSelected) {
+        // 新增条目：用户之前未订阅过
+        newSelectedIds.push(entryIdNum);
+        newSyncedVersions[String(entryIdNum)] = currentVersion;
+        changesApplied.new.push(formatEntry(entry));
+      } else if (syncedVersion !== undefined && currentVersion > syncedVersion) {
+        // 修改的条目：更新版本号
+        newSyncedVersions[String(entryIdNum)] = currentVersion;
+        changesApplied.modified.push(formatEntry(entry));
+      }
+    }
+
+    // 使用事务更新数据库
+    const updateSubscription = db.transaction(() => {
+      db.prepare(`
+        UPDATE workshop_subscriptions 
+        SET selected_entry_ids = ?, synced_version_map = ?, worldbook_name = ?, last_synced_at = CURRENT_TIMESTAMP
+        WHERE user_id = ? AND pack_id = ?
+      `).run(
+        JSON.stringify(newSelectedIds),
+        JSON.stringify(newSyncedVersions),
+        worldbookNameVal,
+        req.user.id,
+        packId
+      );
+    });
+
+    updateSubscription();
+
+    res.json({
+      success: true,
+      message: '选择性同步成功',
+      selected_entry_ids: newSelectedIds,
+      synced_version_map: newSyncedVersions,
+      changes_applied: changesApplied,
+    });
+  } catch (err) {
+    console.error('[Workshop] 选择性同步失败:', err);
     res.status(500).json({ error: '服务器内部错误' });
   }
 });
@@ -596,46 +855,53 @@ router.post('/packs/:packId/entries', requireAuth, (req, res) => {
 
   const keysJson = JSON.stringify(Array.isArray(keys) ? keys : []);
   const keysSecondaryJson = JSON.stringify(Array.isArray(keys_secondary) ? keys_secondary : []);
+  const entryName = String(name).trim();
 
   try {
-    const info = db.prepare(`
-      INSERT INTO workshop_entries (
-        pack_id, author_id, name, entry_type, extra_data, enabled, content, strategy_type,
-        keys, keys_secondary_logic, keys_secondary,
-        scan_depth, position_type, position_order, position_depth, position_role,
-        probability,
-        recursion_prevent_incoming, recursion_prevent_outgoing, recursion_delay_until,
-        effect_sticky, effect_cooldown, effect_delay
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      packId, req.user.id,
-      String(name).trim(),
-      entry_type || 'worldbook',
-      JSON.stringify(extra_data || {}),
-      enabled !== false ? 1 : 0,
-      String(content || ''),
-      strategy_type || 'selective',
-      keysJson,
-      keys_secondary_logic || 'and_any',
-      keysSecondaryJson,
-      scan_depth || 'same_as_global',
-      position_type || 'after_character_definition',
-      parseInt(position_order) || 100,
-      parseInt(position_depth) || 4,
-      position_role || 'system',
-      Math.min(100, Math.max(0, parseInt(probability) ?? 100)),
-      recursion_prevent_incoming ? 1 : 0,
-      recursion_prevent_outgoing ? 1 : 0,
-      recursion_delay_until || null,
-      effect_sticky || null,
-      effect_cooldown || null,
-      effect_delay || null
-    );
+    const createEntry = db.transaction(() => {
+      const info = db.prepare(`
+        INSERT INTO workshop_entries (
+          pack_id, author_id, name, entry_type, extra_data, enabled, content, strategy_type,
+          keys, keys_secondary_logic, keys_secondary,
+          scan_depth, position_type, position_order, position_depth, position_role,
+          probability,
+          recursion_prevent_incoming, recursion_prevent_outgoing, recursion_delay_until,
+          effect_sticky, effect_cooldown, effect_delay,
+          version, updated_at, is_deleted
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, 0)
+      `).run(
+        packId, req.user.id,
+        entryName,
+        entry_type || 'worldbook',
+        JSON.stringify(extra_data || {}),
+        enabled !== false ? 1 : 0,
+        String(content || ''),
+        strategy_type || 'selective',
+        keysJson,
+        keys_secondary_logic || 'and_any',
+        keysSecondaryJson,
+        scan_depth || 'same_as_global',
+        position_type || 'after_character_definition',
+        parseInt(position_order) || 100,
+        parseInt(position_depth) || 4,
+        position_role || 'system',
+        Math.min(100, Math.max(0, parseInt(probability) ?? 100)),
+        recursion_prevent_incoming ? 1 : 0,
+        recursion_prevent_outgoing ? 1 : 0,
+        recursion_delay_until || null,
+        effect_sticky || null,
+        effect_cooldown || null,
+        effect_delay || null
+      );
 
-    // 更新 pack 的 updated_at
-    db.prepare(`UPDATE workshop_packs SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(packId);
+      // 更新 pack 的 updated_at
+      db.prepare(`UPDATE workshop_packs SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(packId);
 
-    res.status(201).json({ data: { id: info.lastInsertRowid }, message: '条目添加成功' });
+      return info.lastInsertRowid;
+    });
+
+    const entryId = createEntry();
+    res.status(201).json({ data: { id: entryId }, message: '条目添加成功' });
   } catch (err) {
     console.error('[Workshop] 添加条目失败:', err);
     res.status(500).json({ error: '服务器内部错误' });
@@ -756,59 +1022,71 @@ router.put('/entries/:entryId', requireAuth, (req, res) => {
 
   const keysJson = JSON.stringify(Array.isArray(keys) ? keys : []);
   const keysSecondaryJson = JSON.stringify(Array.isArray(keys_secondary) ? keys_secondary : []);
+  const entryName = String(name).trim();
+  const oldVersion = existing.version || 1;
+  const newVersion = oldVersion + 1;
 
   try {
-    db.prepare(`
-      UPDATE workshop_entries SET
-        name = ?, entry_type = ?, extra_data = ?, enabled = ?, content = ?, strategy_type = ?,
-        keys = ?, keys_secondary_logic = ?, keys_secondary = ?,
-        scan_depth = ?, position_type = ?, position_order = ?, position_depth = ?, position_role = ?,
-        probability = ?,
-        recursion_prevent_incoming = ?, recursion_prevent_outgoing = ?, recursion_delay_until = ?,
-        effect_sticky = ?, effect_cooldown = ?, effect_delay = ?
-      WHERE id = ?
-    `).run(
-      String(name).trim(),
-      entry_type || 'worldbook',
-      JSON.stringify(extra_data || {}),
-      enabled !== false ? 1 : 0,
-      String(content || ''),
-      strategy_type || 'selective',
-      keysJson,
-      keys_secondary_logic || 'and_any',
-      keysSecondaryJson,
-      scan_depth || 'same_as_global',
-      position_type || 'after_character_definition',
-      parseInt(position_order) || 100,
-      parseInt(position_depth) || 4,
-      position_role || 'system',
-      Math.min(100, Math.max(0, parseInt(probability) ?? 100)),
-      recursion_prevent_incoming ? 1 : 0,
-      recursion_prevent_outgoing ? 1 : 0,
-      recursion_delay_until || null,
-      effect_sticky || null,
-      effect_cooldown || null,
-      effect_delay || null,
-      entryId
-    );
+    const updateEntry = db.transaction(() => {
+      // 1. 创建旧版本快照
+      createEntryVersionSnapshot(db, existing, req.user.id);
 
-    // 更新 pack 的 updated_at
-    db.prepare(`UPDATE workshop_packs SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(existing.pack_id);
+      // 2. 更新条目并递增版本号
+      db.prepare(`
+        UPDATE workshop_entries SET
+          name = ?, entry_type = ?, extra_data = ?, enabled = ?, content = ?, strategy_type = ?,
+          keys = ?, keys_secondary_logic = ?, keys_secondary = ?,
+          scan_depth = ?, position_type = ?, position_order = ?, position_depth = ?, position_role = ?,
+          probability = ?,
+          recursion_prevent_incoming = ?, recursion_prevent_outgoing = ?, recursion_delay_until = ?,
+          effect_sticky = ?, effect_cooldown = ?, effect_delay = ?,
+          version = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(
+        entryName,
+        entry_type || 'worldbook',
+        JSON.stringify(extra_data || {}),
+        enabled !== false ? 1 : 0,
+        String(content || ''),
+        strategy_type || 'selective',
+        keysJson,
+        keys_secondary_logic || 'and_any',
+        keysSecondaryJson,
+        scan_depth || 'same_as_global',
+        position_type || 'after_character_definition',
+        parseInt(position_order) || 100,
+        parseInt(position_depth) || 4,
+        position_role || 'system',
+        Math.min(100, Math.max(0, parseInt(probability) ?? 100)),
+        recursion_prevent_incoming ? 1 : 0,
+        recursion_prevent_outgoing ? 1 : 0,
+        recursion_delay_until || null,
+        effect_sticky || null,
+        effect_cooldown || null,
+        effect_delay || null,
+        newVersion,
+        entryId
+      );
 
-    res.json({ message: '条目更新成功' });
+      // 3. 更新 pack 的 updated_at
+      db.prepare(`UPDATE workshop_packs SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(existing.pack_id);
+    });
+
+    updateEntry();
+    res.json({ message: '条目更新成功', version: newVersion });
   } catch (err) {
     console.error('[Workshop] 更新条目失败:', err);
     res.status(500).json({ error: '服务器内部错误' });
   }
 });
 
-// DELETE /api/workshop/entries/:entryId — 删除条目（仅 pack 作者）
+// DELETE /api/workshop/entries/:entryId — 软删除条目（仅 pack 作者）
 router.delete('/entries/:entryId', requireAuth, (req, res) => {
   const db = getDb();
   const entryId = parseInt(req.params.entryId);
   if (isNaN(entryId)) return res.status(400).json({ error: '无效的条目 ID' });
 
-  const existing = db.prepare(`SELECT e.pack_id, e.author_id, p.author_id as pack_author_id FROM workshop_entries e JOIN workshop_packs p ON e.pack_id = p.id WHERE e.id = ?`).get(entryId);
+  const existing = db.prepare(`SELECT e.*, p.author_id as pack_author_id FROM workshop_entries e JOIN workshop_packs p ON e.pack_id = p.id WHERE e.id = ?`).get(entryId);
   if (!existing) return res.status(404).json({ error: '条目不存在' });
   
   // 条目作者、模组作者或管理员均可删除
@@ -819,9 +1097,121 @@ router.delete('/entries/:entryId', requireAuth, (req, res) => {
     return res.status(403).json({ error: '无权删除此条目' });
   }
 
-  db.prepare(`DELETE FROM workshop_entries WHERE id = ?`).run(entryId);
-  db.prepare(`UPDATE workshop_packs SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(existing.pack_id);
-  res.json({ success: true, message: '条目已删除' });
+  // 如果已经是删除状态，直接返回成功
+  if (existing.is_deleted) {
+    return res.json({ success: true, message: '条目已删除' });
+  }
+
+  const oldVersion = existing.version || 1;
+  const newVersion = oldVersion + 1;
+
+  try {
+    const softDelete = db.transaction(() => {
+      // 1. 创建删除前的版本快照
+      createEntryVersionSnapshot(db, existing, req.user.id);
+
+      // 2. 软删除：设置 is_deleted = 1，并递增版本号
+      db.prepare(`
+        UPDATE workshop_entries 
+        SET is_deleted = 1, version = ?, updated_at = CURRENT_TIMESTAMP 
+        WHERE id = ?
+      `).run(newVersion, entryId);
+
+      // 3. 更新 pack 的 updated_at
+      db.prepare(`UPDATE workshop_packs SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(existing.pack_id);
+    });
+
+    softDelete();
+    res.json({ success: true, message: '条目已删除' });
+  } catch (err) {
+    console.error('[Workshop] 删除条目失败:', err);
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
+
+// ── 版本历史和变更检测路由 ────────────────────────────────────────────
+
+// GET /api/workshop/packs/:packId/changes — 获取模组变更（对比用户订阅状态）
+router.get('/packs/:packId/changes', requireAuth, (req, res) => {
+  const db = getDb();
+  const packId = parseInt(req.params.packId);
+  if (isNaN(packId)) return res.status(400).json({ error: '无效的模组 ID' });
+
+  const pack = db.prepare(`SELECT id FROM workshop_packs WHERE id = ?`).get(packId);
+  if (!pack) return res.status(404).json({ error: '模组不存在' });
+
+  // 获取用户订阅信息
+  const subscription = db.prepare(`
+    SELECT selected_entry_ids, synced_version_map, last_synced_at 
+    FROM workshop_subscriptions 
+    WHERE user_id = ? AND pack_id = ?
+  `).get(req.user.id, packId);
+
+  if (!subscription) {
+    return res.status(400).json({ error: '您尚未订阅此模组' });
+  }
+
+  try {
+    const selectedIds = JSON.parse(subscription.selected_entry_ids || '[]');
+    const syncedVersions = JSON.parse(subscription.synced_version_map || '{}');
+    const selectedIdSet = new Set(selectedIds.map(id => Number(id)));
+
+    // 获取模组当前所有条目（包括已删除的，用于检测删除）
+    const allEntries = db.prepare(`
+      SELECT * FROM workshop_entries WHERE pack_id = ?
+    `).all(packId);
+
+    // 分类变更
+    const newEntries = [];      // 新增的条目（用户未订阅过的）
+    const modifiedEntries = []; // 修改的条目（版本号变化）
+    const deletedEntries = [];  // 删除的条目（用户订阅过但被软删除）
+
+    for (const entry of allEntries) {
+      const entryId = entry.id;
+      const currentVersion = entry.version || 1;
+      const syncedVersion = syncedVersions[String(entryId)];
+      const wasSelected = selectedIdSet.has(entryId);
+
+      if (entry.is_deleted) {
+        // 条目被删除：检查用户是否曾订阅过
+        if (wasSelected) {
+          deletedEntries.push(formatEntry(entry));
+        }
+      } else if (!wasSelected) {
+        // 新增条目：用户未订阅过
+        newEntries.push(formatEntry(entry));
+      } else if (syncedVersion !== undefined && currentVersion > syncedVersion) {
+        // 修改的条目：版本号增加了
+        modifiedEntries.push({
+          ...formatEntry(entry),
+          synced_version: syncedVersion,
+        });
+      }
+    }
+
+    const hasChanges = newEntries.length > 0 || modifiedEntries.length > 0 || deletedEntries.length > 0;
+
+    res.json({
+      data: {
+        pack_id: packId,
+        has_changes: hasChanges,
+        summary: {
+          new: newEntries.length,
+          modified: modifiedEntries.length,
+          deleted: deletedEntries.length,
+        },
+        changes: {
+          new: newEntries,
+          modified: modifiedEntries,
+          deleted: deletedEntries,
+        },
+        last_synced_at: subscription.last_synced_at,
+      },
+    });
+  } catch (err) {
+    console.error('[Workshop] 获取变更失败:', err);
+    res.status(500).json({ error: '服务器内部错误' });
+  }
 });
 
 module.exports = router;

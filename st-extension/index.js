@@ -167,6 +167,9 @@ async function handleWorkshopMessage(event) {
   else if (type === 'workshop_unsubscribe') {
     await handleUnsubscribe(payload);
   } 
+  else if (type === 'workshop_sync_changes') {
+    await handleSyncChanges(payload);
+  } 
   else if (type === 'workshop_get_current_worldbooks') {
     await handleGetCurrentWorldbooks(payload);
   } 
@@ -187,10 +190,11 @@ async function handleWorkshopMessage(event) {
 
 async function handleGetWorldbookList() {
   try {
-    const TH = window.TavernHelper;
-    if (!TH) throw new Error('酒馆助手 TavernHelper 不可用');
+    if (!window.TavernHelper || typeof window.TavernHelper.getWorldbookNames !== 'function') {
+      throw new Error('世界书 API 不可用');
+    }
 
-    const allNames = await TH.getWorldbookNames();
+    const allNames = await window.TavernHelper.getWorldbookNames();
     sendResult('workshop_get_worldbook_list_result', {
       success: true,
       worldbooks: allNames,
@@ -207,22 +211,18 @@ async function handleGetWorldbookList() {
 
 async function handleGetCurrentWorldbooks(payload) {
   try {
-    const TH = window.TavernHelper;
-    if (!TH) throw new Error('酒馆助手 TavernHelper 不可用');
+    if (!window.TavernHelper || typeof window.TavernHelper.getCharWorldbookNames !== 'function') {
+      throw new Error('世界书 API 不可用');
+    }
 
     // 获取当前角色绑定的世界书
-    // TavernHelper 可能有 getCurrentCharacterWorldbooks() 或类似 API
-    // 如果没有，则返回空结果
     let primary = null;
     let additional = [];
 
-    // 尝试获取当前角色的世界书绑定信息
-    // 注意：这里需要根据实际的 TavernHelper API 调整
-    if (typeof TH.getCurrentCharacterWorldbooks === 'function') {
-      const result = TH.getCurrentCharacterWorldbooks();
-      primary = result.primary || null;
-      additional = result.additional || [];
-    }
+    // 使用全局函数获取当前角色的世界书绑定信息
+    const result = window.TavernHelper.getCharWorldbookNames('current');
+    primary = result.primary || null;
+    additional = result.additional || [];
     
     sendResult('workshop_get_current_worldbooks_result', {
       success: true,
@@ -250,11 +250,14 @@ async function handleGetWorldbookEntries(payload) {
   }
 
   try {
-    const TH = window.TavernHelper;
-    if (!TH) throw new Error('酒馆助手 TavernHelper 不可用');
+    if (!window.TavernHelper || 
+        typeof window.TavernHelper.getWorldbookNames !== 'function' || 
+        typeof window.TavernHelper.getWorldbook !== 'function') {
+      throw new Error('世界书 API 不可用');
+    }
 
     // 1. 获取用户拥有的所有世界书名称（不限于当前角色绑定的）
-    const allNames = await TH.getWorldbookNames();
+    const allNames = await window.TavernHelper.getWorldbookNames();
     
     // 2. 在全量列表中进行匹配
     if (!allNames.includes(worldbookName)) {
@@ -268,7 +271,7 @@ async function handleGetWorldbookEntries(payload) {
     }
 
     // 3. 如果存在，获取其具体条目
-    const entries = await TH.getWorldbook(worldbookName);
+    const entries = await window.TavernHelper.getWorldbook(worldbookName);
     
     sendResult('workshop_get_worldbook_entries_result', {
       success: true,
@@ -360,7 +363,7 @@ async function handleOpenOAuth(payload) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 扫描已订阅的 Pack（使用 window.TavernHelper API）
+// 扫描已订阅的 Pack
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function handleScan(payload) {
@@ -371,17 +374,20 @@ async function handleScan(payload) {
   }
 
   try {
-    const TH = window.TavernHelper;
-    if (!TH) throw new Error('TavernHelper 不可用');
+    if (!window.TavernHelper || 
+        typeof window.TavernHelper.getWorldbookNames !== 'function' || 
+        typeof window.TavernHelper.getWorldbook !== 'function') {
+      throw new Error('世界书 API 不可用');
+    }
 
-    const names = TH.getWorldbookNames();
+    const names = await window.TavernHelper.getWorldbookNames();
     if (!names.includes(worldbookName)) {
       const result = { success: true, packIds: [], entryCountMap: {} };
       sendResult('workshop_scan_result', result);
       return result;
     }
 
-    const entries = await TH.getWorldbook(worldbookName);
+    const entries = await window.TavernHelper.getWorldbook(worldbookName);
     const packMap = {}; // { packId: entryCount }
     for (const entry of entries) {
       if (entry.extra && entry.extra.source === 'storyshare_workshop' && entry.extra.pack_id != null) {
@@ -403,7 +409,7 @@ async function handleScan(payload) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 订阅 Pack（插入世界书，使用 window.TavernHelper API）
+// 订阅 Pack（插入世界书）
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function handleSubscribe(payload) {
@@ -437,8 +443,11 @@ async function handleSubscribe(payload) {
   }
 
   try {
-    const TH = window.TavernHelper;
-    if (!TH) throw new Error('酒馆助手 TavernHelper 不可用');
+    if (!window.TavernHelper || 
+        typeof window.TavernHelper.getWorldbookNames !== 'function' || 
+        typeof window.TavernHelper.createWorldbook !== 'function') {
+      throw new Error('世界书 API 不可用');
+    }
 
     // 分离全局正则和角色正则
     const globalRegexEntries = [];
@@ -469,23 +478,26 @@ async function handleSubscribe(payload) {
 
     // 1. Worldbook
     if (worldbookEntries.length > 0) {
-      const names = TH.getWorldbookNames();
+      const names = await window.TavernHelper.getWorldbookNames();
       if (!names.includes(worldbookName)) {
-        await TH.createWorldbook(worldbookName);
+        await window.TavernHelper.createWorldbook(worldbookName);
       }
       // 移除此 pack 的旧条目（幂等）
-      await TH.deleteWorldbookEntries(
+      await window.TavernHelper.deleteWorldbookEntries(
         worldbookName,
         entry => entry.extra && entry.extra.source === 'storyshare_workshop' && entry.extra.pack_id === packId,
         { render: 'debounced' }
       );
-      await TH.createWorldbookEntries(worldbookName, worldbookEntries, { render: 'immediate' });
+      await window.TavernHelper.createWorldbookEntries(worldbookName, worldbookEntries, { render: 'immediate' });
       insertedCount += worldbookEntries.length;
     }
 
     // 2. 全局正则
     if (globalRegexEntries.length > 0) {
-      await TH.updateTavernRegexesWith(regexes => {
+      if (!window.TavernHelper || typeof window.TavernHelper.updateTavernRegexesWith !== 'function') {
+        throw new Error('正则 API 不可用');
+      }
+      await window.TavernHelper.updateTavernRegexesWith(regexes => {
         const newRegexes = regexes.filter(r => !(r.id && String(r.id).startsWith(`st_workshop_${packId}_`)));
         for (const entry of globalRegexEntries) {
           const ed = entry.extra_data || {};
@@ -510,7 +522,10 @@ async function handleSubscribe(payload) {
 
     // 3. 角色正则
     if (charRegexEntries.length > 0) {
-      await TH.updateTavernRegexesWith(regexes => {
+      if (!window.TavernHelper || typeof window.TavernHelper.updateTavernRegexesWith !== 'function') {
+        throw new Error('正则 API 不可用');
+      }
+      await window.TavernHelper.updateTavernRegexesWith(regexes => {
         const newRegexes = regexes.filter(r => !(r.id && String(r.id).startsWith(`st_workshop_${packId}_`)));
         for (const entry of charRegexEntries) {
           const ed = entry.extra_data || {};
@@ -540,13 +555,25 @@ async function handleSubscribe(payload) {
       if (!char.alternate_greetings) char.alternate_greetings = [];
       
       for (const entry of greetingEntries) {
-        if (entry.content && !char.alternate_greetings.includes(entry.content)) {
-          char.alternate_greetings.push(entry.content);
-          insertedCount++;
-          if (char.data) {
-            if (!char.data.alternate_greetings) char.data.alternate_greetings = [];
-            if (!char.data.alternate_greetings.includes(entry.content)) {
-              char.data.alternate_greetings.push(entry.content);
+        if (entry.content) {
+          // 添加隐藏标记以便后续识别和删除
+          const markedContent = `${entry.content}\n<!--st_workshop_${packId}_${entry.extra.workshop_entry_id}-->`;
+          
+          // 检查是否已存在（通过标记识别）
+          const existingIndex = char.alternate_greetings.findIndex(g => 
+            g.includes(`<!--st_workshop_${packId}_${entry.extra.workshop_entry_id}-->`)
+          );
+          
+          if (existingIndex === -1) {
+            char.alternate_greetings.push(markedContent);
+            insertedCount++;
+            if (char.data) {
+              if (!char.data.alternate_greetings) char.data.alternate_greetings = [];
+              if (!char.data.alternate_greetings.find(g => 
+                g.includes(`<!--st_workshop_${packId}_${entry.extra.workshop_entry_id}-->`)
+              )) {
+                char.data.alternate_greetings.push(markedContent);
+              }
             }
           }
         }
@@ -576,7 +603,7 @@ async function handleSubscribe(payload) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 取消订阅 Pack（移除世界书条目，使用 window.TavernHelper API）
+// 取消订阅 Pack（移除世界书条目）
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function handleUnsubscribe(payload) {
@@ -588,8 +615,11 @@ async function handleUnsubscribe(payload) {
   }
 
   try {
-    const TH = window.TavernHelper;
-    if (!TH) throw new Error('TavernHelper 不可用');
+    if (!window.TavernHelper || 
+        typeof window.TavernHelper.getWorldbookNames !== 'function' || 
+        typeof window.TavernHelper.deleteWorldbookEntries !== 'function') {
+      throw new Error('世界书 API 不可用');
+    }
 
     // 分离条目类型
     const regexEntries = entries ? entries.filter(e => e.type === 'regex') : [];
@@ -611,9 +641,9 @@ async function handleUnsubscribe(payload) {
     let removedCount = 0;
 
     // 1. Worldbook
-    const names = TH.getWorldbookNames();
+    const names = await window.TavernHelper.getWorldbookNames();
     if (names.includes(worldbookName)) {
-      const { deleted_entries } = await TH.deleteWorldbookEntries(
+      const { deleted_entries } = await window.TavernHelper.deleteWorldbookEntries(
         worldbookName,
         entry => entry.extra && entry.extra.source === 'storyshare_workshop' && entry.extra.pack_id === packId,
         { render: 'immediate' }
@@ -624,7 +654,10 @@ async function handleUnsubscribe(payload) {
     // 2. 全局 Regex（使用 scope: 'all' 与订阅时一致）
     const globalRegexEntries = regexEntries.filter(e => !(e.extra_data && e.extra_data.regex_scope === 'character'));
     if (globalRegexEntries.length > 0) {
-      await TH.updateTavernRegexesWith(regexes => {
+      if (!window.TavernHelper || typeof window.TavernHelper.updateTavernRegexesWith !== 'function') {
+        throw new Error('正则 API 不可用');
+      }
+      await window.TavernHelper.updateTavernRegexesWith(regexes => {
         const beforeCount = regexes.length;
         const newRegexes = regexes.filter(r => !(r.id && String(r.id).startsWith(`st_workshop_${packId}_`)));
         removedCount += (beforeCount - newRegexes.length);
@@ -634,7 +667,10 @@ async function handleUnsubscribe(payload) {
 
     // 3. 角色 Regex
     if (charRegexEntries.length > 0) {
-      await TH.updateTavernRegexesWith(regexes => {
+      if (!window.TavernHelper || typeof window.TavernHelper.updateTavernRegexesWith !== 'function') {
+        throw new Error('正则 API 不可用');
+      }
+      await window.TavernHelper.updateTavernRegexesWith(regexes => {
         const beforeCount = regexes.length;
         const newRegexes = regexes.filter(r => !(r.id && String(r.id).startsWith(`st_workshop_${packId}_`)));
         removedCount += (beforeCount - newRegexes.length);
@@ -646,15 +682,19 @@ async function handleUnsubscribe(payload) {
     if (greetingEntries.length > 0) {
       const { chId, characters } = getCharacterInfo();
       const char = characters[chId];
-      const contentsToRemove = new Set(greetingEntries.map(e => e.content));
       
+      // 通过隐藏标记识别并删除该 pack 的开场白
       if (Array.isArray(char.alternate_greetings)) {
         const beforeLen = char.alternate_greetings.length;
-        char.alternate_greetings = char.alternate_greetings.filter(g => !contentsToRemove.has(g));
+        char.alternate_greetings = char.alternate_greetings.filter(g => 
+          !g.includes(`<!--st_workshop_${packId}_`)
+        );
         removedCount += (beforeLen - char.alternate_greetings.length);
       }
       if (char.data && Array.isArray(char.data.alternate_greetings)) {
-        char.data.alternate_greetings = char.data.alternate_greetings.filter(g => !contentsToRemove.has(g));
+        char.data.alternate_greetings = char.data.alternate_greetings.filter(g => 
+          !g.includes(`<!--st_workshop_${packId}_`)
+        );
       }
       
       if (typeof window.saveCharacterDebounced === 'function') {
@@ -676,6 +716,338 @@ async function handleUnsubscribe(payload) {
     const result = { success: false, message: '取消订阅失败：' + err.message };
     sendResult('workshop_unsubscribe_result', result);
     toastr.error('取消订阅失败', 'ST创意工坊');
+    return result;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 增量同步变更（处理新增、修改、删除）
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function handleSyncChanges(payload) {
+  const { packId, worldbookName, changes } = payload;
+  if (packId == null || !worldbookName || !changes) {
+    const result = { success: false, message: '缺少必要参数' };
+    sendResult('workshop_sync_changes_result', result);
+    return result;
+  }
+
+  try {
+    const names = await window.TavernHelper.getWorldbookNames();
+    if (!names.includes(worldbookName)) {
+      await window.TavernHelper.createWorldbook(worldbookName);
+    }
+
+    let appliedCount = 0;
+
+    // 1. 处理删除（需要分类处理：worldbook / regex / greeting）
+    if (changes.deleted && changes.deleted.length > 0) {
+      try {
+        // 删除世界书条目
+        const { deleted_entries } = await window.TavernHelper.deleteWorldbookEntries(
+          worldbookName,
+          e => e.extra?.source === 'storyshare_workshop'
+            && e.extra.pack_id === packId
+            && changes.deleted.map(entry => entry.id).includes(e.extra.workshop_entry_id),
+          { render: 'debounced' }
+        );
+        appliedCount += deleted_entries.length;
+
+        // 删除正则（全局和角色）
+        const deletedRegexIds = changes.deleted.filter(e => e.entry_type === 'regex').map(e => e.id);
+        if (deletedRegexIds.length > 0) {
+          // 全局正则
+          await window.TavernHelper.updateTavernRegexesWith(regexes => {
+            const beforeCount = regexes.length;
+            const newRegexes = regexes.filter(r => {
+              if (!r.id || !String(r.id).startsWith(`st_workshop_${packId}_`)) return true;
+              const entryId = Number(String(r.id).split('_').pop());
+              return !deletedRegexIds.includes(entryId);
+            });
+            appliedCount += (beforeCount - newRegexes.length);
+            return newRegexes;
+          }, { scope: 'all' });
+
+          // 角色正则
+          await window.TavernHelper.updateTavernRegexesWith(regexes => {
+            const beforeCount = regexes.length;
+            const newRegexes = regexes.filter(r => {
+              if (!r.id || !String(r.id).startsWith(`st_workshop_${packId}_`)) return true;
+              const entryId = Number(String(r.id).split('_').pop());
+              return !deletedRegexIds.includes(entryId);
+            });
+            appliedCount += (beforeCount - newRegexes.length);
+            return newRegexes;
+          }, { scope: 'character' });
+        }
+
+        // 删除开场白
+        const deletedGreetings = changes.deleted.filter(e => e.entry_type === 'greeting');
+        if (deletedGreetings.length > 0) {
+          const { chId, characters } = getCharacterInfo();
+          const char = characters[chId];
+          const deletedEntryIds = deletedGreetings.map(e => e.id);
+          
+          // 通过隐藏标记识别并删除
+          if (Array.isArray(char.alternate_greetings)) {
+            const beforeLen = char.alternate_greetings.length;
+            char.alternate_greetings = char.alternate_greetings.filter(g => {
+              // 检查是否包含被删除条目的标记
+              for (const entryId of deletedEntryIds) {
+                if (g.includes(`<!--st_workshop_${packId}_${entryId}-->`)) {
+                  return false;
+                }
+              }
+              return true;
+            });
+            appliedCount += (beforeLen - char.alternate_greetings.length);
+          }
+          if (char.data && Array.isArray(char.data.alternate_greetings)) {
+            char.data.alternate_greetings = char.data.alternate_greetings.filter(g => {
+              for (const entryId of deletedEntryIds) {
+                if (g.includes(`<!--st_workshop_${packId}_${entryId}-->`)) {
+                  return false;
+                }
+              }
+              return true;
+            });
+          }
+          
+          if (typeof window.saveCharacterDebounced === 'function') {
+            window.saveCharacterDebounced();
+          } else if (typeof window.saveMetadata === 'function') {
+            window.saveMetadata();
+          }
+          if (window.eventSource && typeof window.eventSource.emit === 'function') {
+            window.eventSource.emit('characterEdited', chId);
+          }
+        }
+      } catch (err) {
+        console.error('[ST创意工坊] 删除条目失败:', err);
+      }
+    }
+
+    // 2. 处理新增和修改（先删除旧的，再插入新的）
+    const entriesToUpdate = [
+      ...(changes.new || []),
+      ...(changes.modified || [])
+    ];
+
+    if (entriesToUpdate.length > 0) {
+      const entryIds = entriesToUpdate.map(e => e.id);
+
+      // 分类条目：worldbook / regex / greeting
+      const worldbookEntries = [];
+      const regexEntries = [];
+      const greetingEntries = [];
+
+      for (const entry of entriesToUpdate) {
+        if (entry.entry_type === 'regex') {
+          regexEntries.push(entry);
+        } else if (entry.entry_type === 'greeting') {
+          greetingEntries.push(entry);
+        } else {
+          worldbookEntries.push(entry);
+        }
+      }
+
+      try {
+        // 2.1 处理 Worldbook 条目
+        if (worldbookEntries.length > 0) {
+          // 删除旧的 worldbook 条目
+          await window.TavernHelper.deleteWorldbookEntries(
+            worldbookName,
+            e => e.extra?.source === 'storyshare_workshop'
+              && e.extra.pack_id === packId
+              && worldbookEntries.map(entry => entry.id).includes(e.extra.workshop_entry_id),
+            { render: 'debounced' }
+          );
+
+          // 插入新的 worldbook 条目
+          const stWorldbookEntries = worldbookEntries.map(entry => ({
+            type: 'worldbook',
+            name: entry.name,
+            enabled: !!entry.enabled,
+            strategy: {
+              type: entry.strategy_type || 'selective',
+              keys: entry.keys || [],
+              keys_secondary: {
+                logic: entry.keys_secondary_logic || 'and_any',
+                keys: entry.keys_secondary || [],
+              },
+              scan_depth: entry.scan_depth === 'same_as_global' || entry.scan_depth == null
+                ? 'same_as_global'
+                : Number(entry.scan_depth),
+            },
+            position: {
+              type: entry.position_type || 'after_character_definition',
+              role: entry.position_role || 'system',
+              depth: entry.position_depth != null ? Number(entry.position_depth) : 4,
+              order: entry.position_order != null ? Number(entry.position_order) : 100,
+            },
+            content: entry.content || '',
+            probability: entry.probability != null ? Number(entry.probability) : 100,
+            recursion: {
+              prevent_incoming: !!entry.recursion_prevent_incoming,
+              prevent_outgoing: !!entry.recursion_prevent_outgoing,
+              delay_until: entry.recursion_delay_until != null ? Number(entry.recursion_delay_until) : null,
+            },
+            effect: {
+              sticky: entry.effect_sticky != null ? Number(entry.effect_sticky) : null,
+              cooldown: entry.effect_cooldown != null ? Number(entry.effect_cooldown) : null,
+              delay: entry.effect_delay != null ? Number(entry.effect_delay) : null,
+            },
+            extra: {
+              workshop_entry_id: entry.id,
+              pack_id: packId,
+              source: 'storyshare_workshop',
+            },
+          }));
+
+          await window.TavernHelper.createWorldbookEntries(worldbookName, stWorldbookEntries, { render: 'immediate' });
+          appliedCount += stWorldbookEntries.length;
+        }
+
+        // 2.2 处理 Regex 条目（先删除旧的，再插入新的）
+        if (regexEntries.length > 0) {
+          // 分离全局正则和角色正则
+          const globalRegexEntries = [];
+          const charRegexEntries = [];
+          for (const entry of regexEntries) {
+            if (entry.extra_data && entry.extra_data.regex_scope === 'character') {
+              charRegexEntries.push(entry);
+            } else {
+              globalRegexEntries.push(entry);
+            }
+          }
+
+          // 删除并插入全局正则
+          if (globalRegexEntries.length > 0) {
+            await window.TavernHelper.updateTavernRegexesWith(regexes => {
+              // 先删除旧的
+              const newRegexes = regexes.filter(r => {
+                if (!r.id || !String(r.id).startsWith(`st_workshop_${packId}_`)) return true;
+                const entryId = Number(String(r.id).split('_').pop());
+                return !globalRegexEntries.map(e => e.id).includes(entryId);
+              });
+              // 再插入新的
+              for (const entry of globalRegexEntries) {
+                const ed = entry.extra_data || {};
+                newRegexes.push({
+                  id: `st_workshop_${packId}_${entry.id}`,
+                  script_name: entry.name || '',
+                  enabled: !!entry.enabled,
+                  run_on_edit: !!ed.run_on_edit,
+                  scope: ed.regex_scope || 'global',
+                  find_regex: ed.find_regex || '',
+                  replace_string: entry.content || '',
+                  source: ed.source || { user_input: true, ai_output: true, slash_command: true, world_info: false },
+                  destination: ed.destination || { display: true, prompt: false },
+                  min_depth: ed.min_depth || null,
+                  max_depth: ed.max_depth || null,
+                });
+                appliedCount++;
+              }
+              return newRegexes;
+            }, { scope: 'all' });
+          }
+
+          // 删除并插入角色正则
+          if (charRegexEntries.length > 0) {
+            await window.TavernHelper.updateTavernRegexesWith(regexes => {
+              // 先删除旧的
+              const newRegexes = regexes.filter(r => {
+                if (!r.id || !String(r.id).startsWith(`st_workshop_${packId}_`)) return true;
+                const entryId = Number(String(r.id).split('_').pop());
+                return !charRegexEntries.map(e => e.id).includes(entryId);
+              });
+              // 再插入新的
+              for (const entry of charRegexEntries) {
+                const ed = entry.extra_data || {};
+                newRegexes.push({
+                  id: `st_workshop_${packId}_${entry.id}`,
+                  script_name: entry.name || '',
+                  enabled: !!entry.enabled,
+                  run_on_edit: !!ed.run_on_edit,
+                  scope: 'character',
+                  find_regex: ed.find_regex || '',
+                  replace_string: entry.content || '',
+                  source: ed.source || { user_input: true, ai_output: true, slash_command: true, world_info: false },
+                  destination: ed.destination || { display: true, prompt: false },
+                  min_depth: ed.min_depth || null,
+                  max_depth: ed.max_depth || null,
+                });
+                appliedCount++;
+              }
+              return newRegexes;
+            }, { scope: 'character' });
+          }
+        }
+
+        // 2.3 处理 Greeting 条目（先删除旧的，再插入新的）
+        if (greetingEntries.length > 0) {
+          const { chId, characters } = getCharacterInfo();
+          const char = characters[chId];
+          if (!char.alternate_greetings) char.alternate_greetings = [];
+          
+          // 先删除旧的（通过隐藏标记识别）
+          const entryIds = greetingEntries.map(e => e.id);
+          char.alternate_greetings = char.alternate_greetings.filter(g => {
+            // 检查是否包含要更新条目的标记
+            for (const entryId of entryIds) {
+              if (g.includes(`<!--st_workshop_${packId}_${entryId}-->`)) {
+                return false;
+              }
+            }
+            return true;
+          });
+          if (char.data && Array.isArray(char.data.alternate_greetings)) {
+            char.data.alternate_greetings = char.data.alternate_greetings.filter(g => {
+              for (const entryId of entryIds) {
+                if (g.includes(`<!--st_workshop_${packId}_${entryId}-->`)) {
+                  return false;
+                }
+              }
+              return true;
+            });
+          }
+
+          // 再插入新的（带隐藏标记）
+          for (const entry of greetingEntries) {
+            if (entry.content) {
+              const markedContent = `${entry.content}\n<!--st_workshop_${packId}_${entry.id}-->`;
+              char.alternate_greetings.push(markedContent);
+              appliedCount++;
+              if (char.data) {
+                if (!char.data.alternate_greetings) char.data.alternate_greetings = [];
+                char.data.alternate_greetings.push(markedContent);
+              }
+            }
+          }
+          
+          if (typeof window.saveCharacterDebounced === 'function') {
+            window.saveCharacterDebounced();
+          } else if (typeof window.saveMetadata === 'function') {
+            window.saveMetadata();
+          }
+          if (window.eventSource && typeof window.eventSource.emit === 'function') {
+            window.eventSource.emit('characterEdited', chId);
+          }
+        }
+      } catch (err) {
+        console.error('[ST创意工坊] 更新条目失败:', err);
+      }
+    }
+
+    const result = { success: true, message: `已应用 ${appliedCount} 处变更` };
+    sendResult('workshop_sync_changes_result', result);
+    toastr.success('同步成功', 'ST创意工坊');
+    return result;
+  } catch (err) {
+    console.error('[ST创意工坊] 增量同步失败:', err);
+    const result = { success: false, message: '同步失败：' + err.message };
+    sendResult('workshop_sync_changes_result', result);
+    toastr.error('同步失败', 'ST创意工坊');
     return result;
   }
 }

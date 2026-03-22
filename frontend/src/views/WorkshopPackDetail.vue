@@ -4,6 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useWorkshopStore } from '@/stores/workshop'
 import { useAuthStore } from '@/stores/auth'
 import ConfirmModal from '@/components/ConfirmModal.vue'
+import PackUpdateModal from '@/components/PackUpdateModal.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -592,16 +593,84 @@ function closeEntryDetail() {
 
 const isStEnv = computed(() => workshopStore.isSillyTavernEnv())
 
-const isSubscribedLocally = computed(() => {
-  if (!pack.value) return false
-  if (workshopStore.isFromStExtension() && workshopStore.stConnected) {
-    return !!workshopStore.subscribedPacksInST[packId.value]
-  }
-  if (isStEnv.value) {
-    return !!workshopStore.subscribedPacksInST[packId.value]
-  }
-  return !!pack.value.is_subscribed
+// 订阅状态（服务器端为准）
+const isSubscribed = computed(() => {
+  return !!pack.value?.is_subscribed
 })
+
+// ST 世界书同步状态（仅在 ST 环境中有效）
+const isSyncedToST = computed(() => {
+  if (!pack.value) return false
+  const inStEnv = isStEnv.value || (workshopStore.isFromStExtension() && workshopStore.stConnected)
+  if (!inStEnv) return false
+  return !!workshopStore.subscribedPacksInST[packId.value]
+})
+
+// 是否需要重新同步（已订阅但未同步到世界书）
+const needsResync = computed(() => {
+  const inStEnv = isStEnv.value || (workshopStore.isFromStExtension() && workshopStore.stConnected)
+  return inStEnv && isSubscribed.value && !isSyncedToST.value
+})
+
+// 检测是否可以使用订阅功能
+const canUseSubscription = computed(() => {
+  // 方案1：在ST iframe中直接可用
+  if (workshopStore.isSillyTavernEnv()) return true
+  
+  // 方案2：从ST扩展打开的弹窗，需要检查连接状态
+  if (workshopStore.isFromStExtension() && workshopStore.stConnected) return true
+  
+  return false
+})
+
+// Phase 2: 更新检测
+const packChangesData = computed(() => {
+  if (!pack.value) return null
+  return workshopStore.packChanges[pack.value.id] || null
+})
+
+const hasUpdates = computed(() => {
+  // 只有在已订阅时才显示更新提示
+  if (!isSubscribed.value) return false
+  return !!packChangesData.value?.has_changes
+})
+
+const updateSummary = computed(() => {
+  return packChangesData.value?.summary || { new: 0, modified: 0, deleted: 0 }
+})
+
+// 更新徽章显示文本
+const updateBadgeText = computed(() => {
+  if (!hasUpdates.value) return ''
+  const parts = []
+  if (updateSummary.value.new > 0) parts.push(`${updateSummary.value.new} 新增`)
+  if (updateSummary.value.modified > 0) parts.push(`${updateSummary.value.modified} 修改`)
+  if (updateSummary.value.deleted > 0) parts.push(`${updateSummary.value.deleted} 删除`)
+  return parts.join(', ')
+})
+
+// 更新同步弹窗状态
+const showUpdateModal = ref(false)
+const syncingUpdates = ref(false)
+
+// Phase 2: 打开更新详情弹窗
+function openUpdateModal() {
+  showUpdateModal.value = true
+}
+
+// Phase 2: 选择性同步更新
+async function handleSyncUpdatesSelective(selectedEntryIds) {
+  if (!pack.value || syncingUpdates.value) return
+  syncingUpdates.value = true
+  try {
+    await workshopStore.syncPackUpdatesSelective(pack.value.id, selectedEntryIds)
+    showUpdateModal.value = false
+    // 刷新 pack 数据以获取最新条目
+    await workshopStore.fetchPack(pack.value.id)
+  } finally {
+    syncingUpdates.value = false
+  }
+}
 
 // 返回工坊时携带分区参数
 function goBackToWorkshop() {
@@ -625,6 +694,11 @@ onMounted(async () => {
     workshopStore.loadWorldbookForSection(slug)
   }
   await workshopStore.scanSubscribedPacks()
+  
+  // Phase 2: 如果已订阅，检查更新
+  if (result.is_subscribed) {
+    await workshopStore.fetchPackChanges(packId.value)
+  }
 })
 
 async function handleLike() {
@@ -640,6 +714,8 @@ const targetWorldbookName = ref('')
 const selectedEntryIds = ref([])
 // 用户确认已进入正确角色卡
 const isCharacterConfirmed = ref(false)
+// 重新同步模式标志
+const isResyncMode = ref(false)
 // 导出条目选择（独立状态，避免与订阅弹窗混淆）
 const exportEntryIds = ref([])
 
@@ -664,10 +740,8 @@ const hasRiskyContent = computed(() => {
 async function handleSubscribe() {
   if (!authStore.isLoggedIn) { authStore.loginWithDiscord(); return }
   
-  const currentlySubscribed = isSubscribedLocally.value
-
   // 取消订阅：无需确认，直接执行
-  if (currentlySubscribed) {
+  if (isSubscribed.value) {
     await workshopStore.toggleSubscribe(pack.value, null, 'unsubscribe')
     return
   }
@@ -706,6 +780,45 @@ async function confirmSubscribe() {
   }
   // 传入选中的条目 ID 列表，传 'subscribe' 固定操作方向
   await workshopStore.toggleSubscribe(pack.value, selectedEntryIds.value, 'subscribe')
+}
+
+// 重新同步到世界书（仅同步 ST 世界书，不调用服务器 API）
+async function handleResync() {
+  if (!authStore.isLoggedIn) { authStore.loginWithDiscord(); return }
+  
+  // 弹出确认框，让用户选择要同步的条目
+  if (workshopStore.isFromStExtension() && workshopStore.stConnected) {
+    await workshopStore.fetchWorldbookList()
+  }
+  targetWorldbookName.value = workshopStore.worldbookName
+  selectedEntryIds.value = (pack.value?.entries || []).map(e => e.id)
+  isCharacterConfirmed.value = false
+  showSubConfirm.value = true
+  isResyncMode.value = true  // 标记为重新同步模式
+}
+
+// 确认重新同步
+async function confirmResync() {
+  if (hasRiskyContent.value && !isCharacterConfirmed.value) return
+  
+  showSubConfirm.value = false
+  isResyncMode.value = false
+  
+  // 更新世界书名称
+  if (targetWorldbookName.value.trim()) {
+    const slug = pack.value?.workshop?.slug || pack.value?.section || 'default'
+    workshopStore.setWorldbookName(slug, targetWorldbookName.value.trim())
+  }
+  
+  // 仅同步到 ST，不调用服务器 API
+  if (workshopStore.stConnected) {
+    await workshopStore.syncToStOnly(pack.value, selectedEntryIds.value)
+  } else if (workshopStore.isSillyTavernEnv()) {
+    await workshopStore.insertPackToWorldbook(pack.value, selectedEntryIds.value)
+  }
+  
+  // 重新扫描以更新状态
+  await workshopStore.scanSubscribedPacks()
 }
 
 async function handleDeletePack() {
@@ -778,7 +891,7 @@ watch(() => workshopStore.stNotification, (notif) => {
         <svg class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="20 6 9 17 4 12"/>
         </svg>
-        <span>⚡ 已连接到 SillyTavern 扩展 — 订阅将直接插入世界书「{{ workshopStore.worldbookName }}」</span>
+        <span>已连接到 SillyTavern 扩展 — 「{{ workshopStore.worldbookName }}」</span>
       </div>
 
       <!-- 错误提示 -->
@@ -815,7 +928,23 @@ watch(() => workshopStore.stNotification, (notif) => {
         <div class="flex items-center gap-4 flex-wrap text-xs" style="color:#A8A29E; font-family:'Nunito',sans-serif;">
           <span>{{ entryCountLabel }}</span>
           <span>{{ new Date(pack.created_at).toLocaleDateString('zh-CN') }} 发布</span>
-          <span v-if="(isStEnv || (workshopStore.isFromStExtension() && workshopStore.stConnected)) && isSubscribedLocally" style="color:#16A34A; font-weight:700;">✓ 已插入世界书</span>
+          <span v-if="isSubscribed" style="color:#16A34A; font-weight:700;">✓ 已订阅</span>
+          <span v-if="isSyncedToST" style="color:#2563EB; font-weight:700;">已同步到世界书</span>
+          <span v-if="needsResync" style="color:#EA580C; font-weight:700;">需要重新同步</span>
+          <!-- Phase 2: 更新提示徽章 -->
+          <button
+            v-if="hasUpdates"
+            class="update-badge flex items-center gap-1.5 px-3 py-1 rounded-full font-bold text-xs transition-all duration-150 hover:scale-105"
+            style="background:#FEF3C7; color:#D97706; border:2px solid #F59E0B; box-shadow:2px 2px 0 #F59E0B;"
+            @click="openUpdateModal"
+          >
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="16" x2="12" y2="12"/>
+              <line x1="12" y1="8" x2="12.01" y2="8"/>
+            </svg>
+            更新：{{ updateBadgeText }}
+          </button>
         </div>
 
         <!-- 操作按钮行 -->
@@ -838,11 +967,12 @@ watch(() => workshopStore.stNotification, (notif) => {
           <!-- 订阅 -->
           <button
             class="btn-action-sub flex items-center gap-1.5 px-4 py-2 rounded-full font-bold text-sm transition-all duration-150"
-            :style="isSubscribedLocally
+            :style="isSubscribed
               ? 'background:#F0FDF4; color:#16A34A; border:2.5px solid #22C55E; box-shadow:3px 3px 0 #22C55E;'
               : 'background:#FFFBF0; color:#A8A29E; border:2.5px solid #E7E5E4; box-shadow:3px 3px 0 #E7E5E4;'"
             @click="handleSubscribe"
-            :disabled="workshopStore.stLoading"
+            :disabled="!canUseSubscription || workshopStore.stLoading"
+            :title="!canUseSubscription ? '需要在SillyTavern中使用订阅功能' : ''"
           >
             <svg class="sub-icon w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 22c1.1 0 2-.9 2-2H10c0 1.1.9 2 2 2z"/>
@@ -851,12 +981,26 @@ watch(() => workshopStore.stNotification, (notif) => {
             <span v-if="workshopStore.stLoading">处理中…</span>
             <template v-else>
               <span v-if="workshopStore.isFromStExtension() && workshopStore.stConnected">
-                {{ isSubscribedLocally ? '取消订阅' : '订阅到 ST' }}（{{ pack.sub_count }}）
+                {{ isSubscribed ? '取消订阅' : '订阅到 ST' }}（{{ pack.sub_count }}）
               </span>
               <span v-else>
-                {{ isSubscribedLocally ? '取消订阅' : '订阅' }}（{{ pack.sub_count }}）
+                {{ isSubscribed ? '取消订阅' : '订阅' }}（{{ pack.sub_count }}）
               </span>
             </template>
+          </button>
+
+          <!-- 重新同步按钮（仅在需要时显示） -->
+          <button
+            v-if="needsResync"
+            class="btn-secondary text-sm flex items-center gap-1.5"
+            @click="handleResync"
+            :disabled="workshopStore.stLoading"
+          >
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="23 4 23 10 17 10"></polyline>
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+            </svg>
+            重新同步到世界书
           </button>
 
           <!-- 作者操作 -->
@@ -1115,18 +1259,22 @@ watch(() => workshopStore.stNotification, (notif) => {
     </template>
   </div>
 
-  <!-- 订阅确认弹窗 -->
+  <!-- 订阅/重新同步确认弹窗 -->
   <ConfirmModal
     v-if="showSubConfirm"
-    title="订阅模组"
-    confirm-text="确认订阅"
+    :title="isResyncMode ? '重新同步到世界书' : '订阅模组'"
+    :confirm-text="isResyncMode ? '确认同步' : '确认订阅'"
     cancel-text="取消"
     :confirm-disabled="hasRiskyContent && !isCharacterConfirmed"
-    @confirm="confirmSubscribe"
-    @cancel="showSubConfirm = false"
+    @confirm="isResyncMode ? confirmResync() : confirmSubscribe()"
+    @cancel="showSubConfirm = false; isResyncMode = false"
   >
     <div class="flex flex-col gap-4">
-      <p v-html="`确定要订阅 <strong>${pack?.title}</strong> 吗？`"></p>
+      <p v-if="isResyncMode" class="text-sm" style="color:#78716C;">
+        将重新同步模组「<strong>{{ pack?.title }}</strong>」到 SillyTavern 世界书。<br>
+        <span class="text-xs text-orange-600">注意：这不会更改服务器端的订阅状态。</span>
+      </p>
+      <p v-else v-html="`确定要订阅 <strong>${pack?.title}</strong> 吗？`"></p>
       
       <!-- 风险提示与确认 -->
       <div v-if="hasRiskyContent" class="flex flex-col gap-2 p-3 rounded-xl bg-orange-50 border border-orange-200">
@@ -1402,4 +1550,13 @@ watch(() => workshopStore.stNotification, (notif) => {
       </div>
     </div>
   </ConfirmModal>
+
+  <!-- Phase 2: 更新详情弹窗 -->
+  <PackUpdateModal
+    v-if="showUpdateModal"
+    :changes-data="packChangesData"
+    :syncing="syncingUpdates"
+    @close="showUpdateModal = false"
+    @sync-selective="handleSyncUpdatesSelective"
+  />
 </template>

@@ -125,6 +125,8 @@ To add tests, install `vitest` in the relevant sub-project and add `"test": "vit
 2. Third-party packages (`express`, `passport`, `better-sqlite3`)
 3. Local modules (`../db/init`, `../middleware/auth`)
 
+# 请注意，不要使用emoji符号代替图标，请使用svg
+
 ### Vue Components
 - Always `<script setup>` Composition API — never Options API.
 - SFC block order: `<script setup>` → `<template>` → `<style>`.

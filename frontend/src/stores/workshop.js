@@ -79,6 +79,8 @@ function toStEntry(entry, packId) {
 export const useWorkshopStore = defineStore('workshop', () => {
   // ── Pack 列表状态 ────────────────────────────────────────────
   const packs = ref([])
+  const packsHash = ref(null) // 存储上次的数据哈希值
+  const packsQuery = ref(null) // 存储上次的查询参数（用于判断是否改变筛选条件）
   const pagination = ref({ page: 1, limit: 20, total: 0, totalPages: 1 })
   const loading = ref(false)
   const error = ref(null)
@@ -204,8 +206,27 @@ export const useWorkshopStore = defineStore('workshop', () => {
     error.value = null
     try {
       const json = await workshopApi.fetchPacks(page, { workshop, search, tag, authorId, sort })
-      packs.value = json.data
-      pagination.value = json.pagination
+      
+      // 生成查询参数字符串（用于判断筛选条件是否改变）
+      const queryKey = JSON.stringify({ workshop, search, tag, authorId, sort, page })
+      const queryChanged = packsQuery.value !== queryKey
+      
+      // 如果筛选条件改变，清除旧哈希
+      if (queryChanged) {
+        packsQuery.value = queryKey
+        packsHash.value = null
+      }
+      
+      // 对比哈希值，只有数据改变时才更新
+      if (json.hash && json.hash === packsHash.value && !queryChanged) {
+        // 数据未改变，只更新分页信息
+        pagination.value = json.pagination
+      } else {
+        // 数据有改变，更新所有内容
+        packs.value = json.data
+        packsHash.value = json.hash
+        pagination.value = json.pagination
+      }
     } catch (err) {
       error.value = err.message || '获取 Pack 列表失败'
     } finally {
@@ -295,12 +316,24 @@ export const useWorkshopStore = defineStore('workshop', () => {
   async function toggleSubscribe(pack, selectedEntryIds = null, forceAction = null) {
     error.value = null
     try {
+      // 获取完整条目列表（用于构建版本映射）
+      let entries = pack.entries
+      if (!entries && (forceAction === 'subscribe' || (!forceAction && !pack.is_subscribed))) {
+        const json = await workshopApi.fetchPack(pack.id)
+        entries = json.data.entries || []
+      }
+
+      // 如果未指定 selectedEntryIds，则默认选中所有条目
+      const finalSelectedIds = selectedEntryIds !== null 
+        ? selectedEntryIds 
+        : (entries ? entries.map(e => e.id) : [])
+
       // ST 扩展模式：先执行 ST 操作，成功后再调用服务器 API
       if (stConnected.value) {
         const isSubscribing = forceAction === 'subscribe' || (!forceAction && !pack.is_subscribed)
 
         if (isSubscribing) {
-          const stSuccess = await _subscribeViaST(pack, selectedEntryIds)
+          const stSuccess = await _subscribeViaST(pack, finalSelectedIds)
           if (!stSuccess) {
             // ST 订阅失败，不调用服务器 API
             return null
@@ -314,11 +347,17 @@ export const useWorkshopStore = defineStore('workshop', () => {
         }
       }
 
-      // 调用服务器 API
-      const bodyPayload = forceAction ? JSON.stringify({ action: forceAction }) : '{}'
-        const json = await workshopApi.toggleSubscribe(
-            pack.id,
-            forceAction ? bodyPayload : null)
+      // 调用服务器 API（带条目级别追踪）
+      const apiOptions = {}
+      if (forceAction) {
+        apiOptions.action = forceAction
+      }
+      if (forceAction === 'subscribe' || (!forceAction && !pack.is_subscribed)) {
+        apiOptions.selected_entry_ids = finalSelectedIds
+        apiOptions.worldbook_name = worldbookName.value
+      }
+
+      const json = await workshopApi.toggleSubscribe(pack.id, apiOptions)
 
       // 更新列表/详情中的数据
       const p = packs.value.find((p) => p.id === pack.id)
@@ -331,10 +370,21 @@ export const useWorkshopStore = defineStore('workshop', () => {
         currentPack.value.sub_count = json.sub_count
       }
 
+      // 清除或刷新更新状态
+      if (json.subscribed) {
+        // 订阅成功：立即检查更新
+        await fetchPackChanges(pack.id)
+      } else {
+        // 取消订阅：清除该模组的更新状态
+        const updated = { ...packChanges.value }
+        delete updated[pack.id]
+        packChanges.value = updated
+      }
+
       // 直接嵌入 ST 模式（非扩展模式）
       if (!stConnected.value && isSillyTavernEnv()) {
         if (json.subscribed) {
-          await insertPackToWorldbook(pack, selectedEntryIds)
+          await insertPackToWorldbook(pack, finalSelectedIds)
         } else {
           await removePackFromWorldbook(pack.id)
         }
@@ -509,6 +559,18 @@ export const useWorkshopStore = defineStore('workshop', () => {
         }
         return
       }
+
+      // 增量同步结果
+      if (type === 'workshop_sync_changes_result') {
+        const key = Object.keys(_pending).find(k => k.startsWith('sync_changes_'))
+        if (key) {
+          const { resolve } = _pending[key]
+          clearTimeout(_pending[key]?.timer)
+          delete _pending[key]
+          resolve({ success, message })
+        }
+        return
+      }
     })
   }
 
@@ -670,6 +732,28 @@ export const useWorkshopStore = defineStore('workshop', () => {
     }
   }
 
+  // 通过 ST 扩展增量同步变更（postMessage）
+  async function _syncPackChangesViaST(packId, changesApplied, wbName) {
+    try {
+      const result = await _sendToOpener('workshop_sync_changes', {
+        packId,
+        worldbookName: wbName,
+        changes: changesApplied,
+      }, `sync_changes_${++_requestCounter}`)
+
+      if (result && result.success) {
+        stNotification.value = { type: 'success', message: result.message || '同步成功' }
+      } else {
+        stNotification.value = { type: 'error', message: (result && result.message) || '同步失败' }
+      }
+      return result && result.success
+    } catch (err) {
+      console.error('[Workshop] ST 扩展增量同步失败:', err)
+      stNotification.value = { type: 'error', message: '同步失败：' + err.message }
+      return false
+    }
+  }
+
   // ── SillyTavern 世界书操作 ───────────────────────────────────
 
   // ── 动态映射操作 ──────────────────────────────────────────────
@@ -729,16 +813,18 @@ export const useWorkshopStore = defineStore('workshop', () => {
     if (!isSillyTavernEnv()) return
     stLoading.value = true
     try {
-      const TH = window.TavernHelper
-      if (!TH) return
+      if (typeof getWorldbookNames !== 'function' || typeof getWorldbook !== 'function') {
+        console.warn('[Workshop] 世界书 API 不可用')
+        return
+      }
 
-      const names = TH.getWorldbookNames()
+      const names = await getWorldbookNames()
       if (!names.includes(worldbookName.value)) {
         subscribedPacksInST.value = {}
         return
       }
 
-      const entries = await TH.getWorldbook(worldbookName.value)
+      const entries = await getWorldbook(worldbookName.value)
       const map = {}
       for (const e of entries) {
         if (e.extra && e.extra.source === 'storyshare_workshop' && e.extra.pack_id != null) {
@@ -753,13 +839,14 @@ export const useWorkshopStore = defineStore('workshop', () => {
     }
   }
 
-  // 将整个 pack 的所有（或选中的）条目插入到 ST 世界书（TavernHelper API）
+  // 将整个 pack 的所有（或选中的）条目插入到 ST 世界书
   async function insertPackToWorldbook(pack, selectedEntryIds = null) {
     if (!isSillyTavernEnv()) return false
     stLoading.value = true
     try {
-      const TH = window.TavernHelper
-      if (!TH) throw new Error('TavernHelper 不可用')
+      if (typeof getWorldbookNames !== 'function' || typeof createWorldbook !== 'function') {
+        throw new Error('世界书 API 不可用')
+      }
 
       // 获取最新 pack 数据（含所有条目）
       let entries = pack.entries
@@ -775,21 +862,21 @@ export const useWorkshopStore = defineStore('workshop', () => {
       }
 
       // 确保世界书存在
-      const names = TH.getWorldbookNames()
+      const names = await getWorldbookNames()
       if (!names.includes(worldbookName.value)) {
-        await TH.createWorldbook(worldbookName.value)
+        await createWorldbook(worldbookName.value)
       }
 
       // 先移除此 pack 的旧条目（幂等操作）
-      await TH.deleteWorldbookEntries(
+      await deleteWorldbookEntries(
         worldbookName.value,
         e => e.extra && e.extra.source === 'storyshare_workshop' && e.extra.pack_id === pack.id,
         { render: 'debounced' }
       )
 
-      // 插入新条目（TavernHelper 自动分配 uid）
+      // 插入新条目
       const stEntries = entries.map(entry => toStEntry(entry, pack.id))
-      await TH.createWorldbookEntries(worldbookName.value, stEntries, { render: 'immediate' })
+      await createWorldbookEntries(worldbookName.value, stEntries, { render: 'immediate' })
 
       subscribedPacksInST.value = { ...subscribedPacksInST.value, [pack.id]: true }
       return true
@@ -802,18 +889,19 @@ export const useWorkshopStore = defineStore('workshop', () => {
     }
   }
 
-  // 从 ST 世界书中移除某个 pack 的所有条目（TavernHelper API）
+  // 从 ST 世界书中移除某个 pack 的所有条目
   async function removePackFromWorldbook(packId) {
     if (!isSillyTavernEnv()) return false
     stLoading.value = true
     try {
-      const TH = window.TavernHelper
-      if (!TH) throw new Error('TavernHelper 不可用')
+      if (typeof getWorldbookNames !== 'function' || typeof deleteWorldbookEntries !== 'function') {
+        throw new Error('世界书 API 不可用')
+      }
 
-      const names = TH.getWorldbookNames()
+      const names = await getWorldbookNames()
       if (!names.includes(worldbookName.value)) return false
 
-      await TH.deleteWorldbookEntries(
+      await deleteWorldbookEntries(
         worldbookName.value,
         e => e.extra && e.extra.source === 'storyshare_workshop' && e.extra.pack_id === packId,
         { render: 'immediate' }
@@ -827,6 +915,211 @@ export const useWorkshopStore = defineStore('workshop', () => {
       console.error('[Workshop] 移除 Pack 世界书条目失败:', err)
       error.value = '移除世界书条目失败'
       return false
+    } finally {
+      stLoading.value = false
+    }
+  }
+
+  // ── Phase 2: 变更检测和版本历史 ────────────────────────────────────
+
+  // 模组变更状态 { [packId]: { hasChanges, summary, changes, lastSyncedAt } }
+  const packChanges = ref({})
+  const changesLoading = ref(false)
+
+  /**
+   * 获取模组变更（对比用户订阅状态）
+   * @param {number} packId - 模组 ID
+   */
+  async function fetchPackChanges(packId) {
+    changesLoading.value = true
+    error.value = null
+    try {
+      const json = await workshopApi.fetchPackChanges(packId)
+      packChanges.value = { ...packChanges.value, [packId]: json.data }
+      return json.data
+    } catch (err) {
+      // 如果用户未订阅该模组，不显示错误
+      if (err.message && err.message.includes('未订阅')) {
+        return null
+      }
+      error.value = err.message || '获取变更失败'
+      return null
+    } finally {
+      changesLoading.value = false
+    }
+  }
+
+  /**
+   * 同步模组更新（全量同步到服务器 + ST）
+   * @param {number} packId - 模组 ID
+   * @param {string} worldbookNameVal - 目标世界书名称
+   */
+  async function syncPackUpdates(packId, worldbookNameVal = '') {
+    error.value = null
+    try {
+      // 1. 获取模组最新数据
+      const packJson = await workshopApi.fetchPack(packId)
+      const pack = packJson.data
+
+      // 2. 如果在 ST 环境，同步到世界书
+      if (stConnected.value) {
+        const selectedIds = pack.entries.map(e => e.id)
+        const stSuccess = await _subscribeViaST(pack, selectedIds)
+        if (!stSuccess) {
+          return null
+        }
+      } else if (isSillyTavernEnv()) {
+        const selectedIds = pack.entries.map(e => e.id)
+        await insertPackToWorldbook(pack, selectedIds)
+      }
+
+      // 3. 同步到服务器（更新订阅记录）
+      const json = await workshopApi.syncPackUpdates(packId, worldbookNameVal || worldbookName.value)
+
+      // 4. 清除该模组的变更状态
+      const updated = { ...packChanges.value }
+      delete updated[packId]
+      packChanges.value = updated
+
+      // 5. 刷新订阅列表
+      await fetchMySubscriptions()
+
+      stNotification.value = { type: 'success', message: json.message || '同步成功' }
+      return json
+    } catch (err) {
+      error.value = err.message || '同步失败'
+      stNotification.value = { type: 'error', message: err.message || '同步失败' }
+      return null
+    }
+  }
+
+  /**
+   * 批量获取所有订阅模组的变更状态
+   */
+  async function fetchAllSubscribedPackChanges() {
+    if (mySubscriptions.value.length === 0) return
+
+    changesLoading.value = true
+    const results = {}
+
+    for (const sub of mySubscriptions.value) {
+      try {
+        const json = await workshopApi.fetchPackChanges(sub.id)
+        if (json.data && json.data.has_changes) {
+          results[sub.id] = json.data
+        }
+      } catch (err) {
+        // 忽略单个模组的错误
+        console.warn(`[Workshop] 获取模组 ${sub.id} 变更失败:`, err.message)
+      }
+    }
+
+    packChanges.value = results
+    changesLoading.value = false
+  }
+
+  /**
+   * 选择性同步模组更新（仅同步用户选中的条目）
+   * @param {number} packId - 模组 ID
+   * @param {number[]} selectedEntryIds - 用户选中的条目 ID 列表
+   * @param {string} worldbookNameVal - 可选的世界书名称（优先级高于 store 中的默认值）
+   */
+  async function syncPackUpdatesSelective(packId, selectedEntryIds, worldbookNameVal = null) {
+    if (!packId || !Array.isArray(selectedEntryIds)) {
+      error.value = '参数错误'
+      return null
+    }
+
+    stLoading.value = true
+    error.value = null
+
+    try {
+      // 1. 调用后端 API，更新数据库订阅记录
+      const json = await workshopApi.syncPackUpdatesSelective(
+        packId,
+        selectedEntryIds,
+        worldbookNameVal || worldbookName.value
+      )
+
+      const { changes_applied } = json
+
+      // 2. 如果在 ST 环境，同步到世界书
+      if (stConnected.value) {
+        // ST 扩展模式：通过 postMessage 增量同步
+        const stSuccess = await _syncPackChangesViaST(packId, changes_applied, worldbookNameVal || worldbookName.value)
+        if (!stSuccess) {
+          console.error('[Workshop] ST 扩展同步失败')
+        }
+      } else if (isSillyTavernEnv()) {
+        // 直接嵌入 ST 模式：使用全局函数
+        if (typeof getWorldbookNames !== 'function' || typeof createWorldbook !== 'function') {
+          console.warn('[Workshop] 世界书 API 不可用，跳过世界书同步')
+        } else {
+          const wbName = worldbookNameVal || worldbookName.value
+
+          // 确保世界书存在
+          const names = await getWorldbookNames()
+          if (!names.includes(wbName)) {
+            await createWorldbook(wbName)
+          }
+
+          // 2.1 处理删除（从世界书移除）
+          if (changes_applied.deleted && changes_applied.deleted.length > 0) {
+            try {
+              await deleteWorldbookEntries(
+                wbName,
+                e => e.extra?.source === 'storyshare_workshop'
+                  && e.extra.pack_id === packId
+                  && changes_applied.deleted.includes(e.extra.workshop_entry_id),
+                { render: 'debounced' }
+              )
+            } catch (err) {
+              console.error('[Workshop] 删除世界书条目失败:', err)
+            }
+          }
+
+          // 2.2 处理新增和修改（先删除旧的，再插入新的）
+          const entriesToUpdate = [
+            ...(changes_applied.new || []),
+            ...(changes_applied.modified || [])
+          ]
+
+          if (entriesToUpdate.length > 0) {
+            const entryIds = entriesToUpdate.map(e => e.id)
+
+            try {
+              // 删除旧条目（处理修改的情况）
+              await deleteWorldbookEntries(
+                wbName,
+                e => e.extra?.source === 'storyshare_workshop'
+                  && e.extra.pack_id === packId
+                  && entryIds.includes(e.extra.workshop_entry_id),
+                { render: 'debounced' }
+              )
+
+              // 插入新条目
+              const stEntries = entriesToUpdate.map(entry => toStEntry(entry, packId))
+              await createWorldbookEntries(wbName, stEntries, { render: 'immediate' })
+            } catch (err) {
+              console.error('[Workshop] 更新世界书条目失败:', err)
+            }
+          }
+        }
+      }
+
+      // 3. 刷新该模组的变更状态
+      await fetchPackChanges(packId)
+
+      // 4. 刷新订阅列表
+      await fetchMySubscriptions()
+
+      stNotification.value = { type: 'success', message: json.message || '同步成功' }
+      return json
+    } catch (err) {
+      console.error('[Workshop] 选择性同步失败:', err)
+      error.value = err.message || '同步失败'
+      stNotification.value = { type: 'error', message: err.message || '同步失败' }
+      return null
     } finally {
       stLoading.value = false
     }
@@ -854,6 +1147,9 @@ export const useWorkshopStore = defineStore('workshop', () => {
     // ST 扩展状态
     stConnected,
     stNotification,
+    // Phase 2: 变更检测状态
+    packChanges,
+    changesLoading,
     // 方法
     fetchPacks,
     fetchPack,
@@ -882,6 +1178,13 @@ export const useWorkshopStore = defineStore('workshop', () => {
     createWorkshop,
     updateWorkshop,
     deleteWorkshop,
+    // Phase 2: 变更检测方法
+    fetchPackChanges,
+    syncPackUpdates,
+    syncPackUpdatesSelective,
+    fetchAllSubscribedPackChanges,
+    // 仅同步到 ST 的方法（用于重新同步）
+    syncToStOnly: _subscribeViaST,
     // 工具函数
     isSillyTavernEnv,
     isFromStExtension,

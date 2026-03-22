@@ -46,13 +46,44 @@ async function toggleLike(packId) {
   return request.post(`/api/workshop/packs/${packId}/like`)
 }
 
-async function toggleSubscribe(packId, forceAction = null) {
-  const options = {}
-  if (forceAction) {
-    options.body = JSON.stringify({ action: forceAction })
-    options.headers = { 'Content-Type': 'application/json' }
-  }
-  return request.post(`/api/workshop/packs/${packId}/subscribe`, forceAction ? { action: forceAction } : {})
+/**
+ * 订阅/取消订阅模组
+ * @param {number} packId - 模组 ID
+ * @param {Object} options - 订阅选项
+ * @param {string} [options.action] - 'subscribe' | 'unsubscribe' | null (toggle)
+ * @param {number[]} [options.selected_entry_ids] - 选中的条目 ID 列表
+ * @param {string} [options.worldbook_name] - 目标世界书名称
+ * @param {Object} [options.synced_version_map] - 条目版本映射 { entryId: version }
+ */
+async function toggleSubscribe(packId, options = {}) {
+  const payload = {}
+  if (options.action) payload.action = options.action
+  if (options.selected_entry_ids) payload.selected_entry_ids = options.selected_entry_ids
+  if (options.worldbook_name) payload.worldbook_name = options.worldbook_name
+  if (options.synced_version_map) payload.synced_version_map = options.synced_version_map
+  return request.post(`/api/workshop/packs/${packId}/subscribe`, payload)
+}
+
+/**
+ * 同步模组更新（全量同步）
+ * @param {number} packId - 模组 ID
+ * @param {string} worldbookName - 目标世界书名称
+ */
+async function syncPackUpdates(packId, worldbookName = '') {
+  return request.post(`/api/workshop/packs/${packId}/sync`, { worldbook_name: worldbookName })
+}
+
+/**
+ * 选择性同步模组更新（仅同步用户选中的条目）
+ * @param {number} packId - 模组 ID
+ * @param {number[]} entryIds - 选中的条目 ID 列表
+ * @param {string} worldbookName - 目标世界书名称
+ */
+async function syncPackUpdatesSelective(packId, entryIds, worldbookName = '') {
+  return request.post(`/api/workshop/packs/${packId}/sync-selective`, {
+    entry_ids: entryIds,
+    worldbook_name: worldbookName
+  })
 }
 
 async function fetchMySubscriptions() {
@@ -79,6 +110,16 @@ async function deleteEntry(entryId) {
   return request.delete(`/api/workshop/entries/${entryId}`)
 }
 
+// ── Phase 2: 版本历史和变更检测 API ────────────────────────────────────
+
+/**
+ * 获取模组变更（对比用户订阅状态）
+ * @param {number} packId - 模组 ID
+ */
+async function fetchPackChanges(packId) {
+  return request.get(`/api/workshop/packs/${packId}/changes`)
+}
+
 export default {
   fetchWorkshops,
   createWorkshop,
@@ -91,10 +132,14 @@ export default {
   deletePack,
   toggleLike,
   toggleSubscribe,
+  syncPackUpdates,
+  syncPackUpdatesSelective,
   fetchMySubscriptions,
   fetchEntry,
   createEntry,
   createEntries,
   updateEntry,
   deleteEntry,
+  // Phase 2: 变更检测
+  fetchPackChanges,
 }

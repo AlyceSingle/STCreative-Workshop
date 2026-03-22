@@ -306,6 +306,157 @@ function initSchema() {
   } catch (_) {
     // 列已存在，忽略
   }
+
+  // =========================================================================
+  // Phase 2 迁移：条目级别订阅追踪 + 版本历史 + 软删除
+  // =========================================================================
+
+  // 迁移：给 workshop_entries 添加软删除和版本控制字段
+  try {
+    db.exec(`ALTER TABLE workshop_entries ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0`);
+  } catch (_) {
+    // 列已存在，忽略
+  }
+
+  try {
+    db.exec(`ALTER TABLE workshop_entries ADD COLUMN updated_at DATETIME DEFAULT NULL`);
+  } catch (_) {
+    // 列已存在，忽略
+  }
+
+  try {
+    db.exec(`ALTER TABLE workshop_entries ADD COLUMN version INTEGER NOT NULL DEFAULT 1`);
+  } catch (_) {
+    // 列已存在，忽略
+  }
+
+  // 迁移：创建条目版本历史表
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS entry_versions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entry_id INTEGER NOT NULL REFERENCES workshop_entries(id) ON DELETE CASCADE,
+        version INTEGER NOT NULL,
+        entry_type TEXT NOT NULL,
+        name TEXT NOT NULL DEFAULT '',
+        content TEXT NOT NULL DEFAULT '',
+        keys TEXT NOT NULL DEFAULT '[]',
+        keys_secondary TEXT NOT NULL DEFAULT '[]',
+        keys_secondary_logic TEXT NOT NULL DEFAULT 'and_any',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        strategy_type TEXT NOT NULL DEFAULT 'selective',
+        scan_depth TEXT NOT NULL DEFAULT 'same_as_global',
+        position_type TEXT NOT NULL DEFAULT 'after_character_definition',
+        position_order INTEGER NOT NULL DEFAULT 100,
+        position_depth INTEGER NOT NULL DEFAULT 4,
+        position_role TEXT NOT NULL DEFAULT 'system',
+        probability INTEGER NOT NULL DEFAULT 100,
+        recursion_prevent_incoming INTEGER NOT NULL DEFAULT 0,
+        recursion_prevent_outgoing INTEGER NOT NULL DEFAULT 0,
+        recursion_delay_until TEXT DEFAULT NULL,
+        effect_sticky TEXT DEFAULT NULL,
+        effect_cooldown TEXT DEFAULT NULL,
+        effect_delay TEXT DEFAULT NULL,
+        extra_data TEXT NOT NULL DEFAULT '{}',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        created_by INTEGER REFERENCES users(id),
+        UNIQUE(entry_id, version)
+      );
+      CREATE INDEX IF NOT EXISTS idx_entry_versions_entry ON entry_versions(entry_id);
+      CREATE INDEX IF NOT EXISTS idx_entry_versions_version ON entry_versions(entry_id, version DESC);
+    `);
+  } catch (_) {
+    // 表已存在，忽略
+  }
+
+  // 迁移：给 workshop_subscriptions 添加条目级别追踪字段
+  try {
+    db.exec(`ALTER TABLE workshop_subscriptions ADD COLUMN selected_entry_ids TEXT DEFAULT '[]'`);
+  } catch (_) {
+    // 列已存在，忽略
+  }
+
+  try {
+    db.exec(`ALTER TABLE workshop_subscriptions ADD COLUMN worldbook_name TEXT DEFAULT ''`);
+  } catch (_) {
+    // 列已存在，忽略
+  }
+
+  try {
+    db.exec(`ALTER TABLE workshop_subscriptions ADD COLUMN last_synced_at DATETIME`);
+  } catch (_) {
+    // 列已存在，忽略
+  }
+
+  try {
+    db.exec(`ALTER TABLE workshop_subscriptions ADD COLUMN synced_version_map TEXT DEFAULT '{}'`);
+  } catch (_) {
+    // 列已存在，忽略
+  }
+
+  // 迁移：给软删除条目创建索引（用于快速筛选活跃条目）
+  try {
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_entries_active ON workshop_entries(pack_id, is_deleted)`);
+  } catch (_) {
+    // 索引已存在，忽略
+  }
+
+  // =========================================================================
+  // Phase 2.1 优化：简化版本快照表，只保留元数据
+  // =========================================================================
+
+  // 迁移：重建 entry_versions 表（移除所有内容字段，只保留元数据）
+  try {
+    // 检查旧表是否存在 content 字段（判断是否需要迁移）
+    const columns = db.pragma('table_info(entry_versions)');
+    const hasContentField = columns.some(col => col.name === 'content');
+    
+    if (hasContentField) {
+      // 需要迁移：创建精简的新表
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS entry_versions_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          entry_id INTEGER NOT NULL REFERENCES workshop_entries(id) ON DELETE CASCADE,
+          version INTEGER NOT NULL,
+          entry_type TEXT NOT NULL DEFAULT 'worldbook',
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          created_by INTEGER REFERENCES users(id),
+          UNIQUE(entry_id, version)
+        );
+      `);
+
+      // 迁移数据：只保留每个条目的最新1条快照
+      db.exec(`
+        INSERT INTO entry_versions_new (id, entry_id, version, entry_type, created_at, created_by)
+        SELECT ev.id, ev.entry_id, ev.version, ev.entry_type, ev.created_at, ev.created_by
+        FROM entry_versions ev
+        WHERE ev.id IN (
+          SELECT MAX(id) FROM entry_versions GROUP BY entry_id
+        )
+      `);
+
+      // 删除旧表并重命名
+      db.exec(`DROP TABLE entry_versions`);
+      db.exec(`ALTER TABLE entry_versions_new RENAME TO entry_versions`);
+
+      // 重建索引
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_entry_versions_entry ON entry_versions(entry_id)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_entry_versions_version ON entry_versions(entry_id, version DESC)`);
+    }
+  } catch (err) {
+    console.warn('[DB Migration] entry_versions 表迁移失败，可能已完成:', err.message);
+  }
+
+  // =========================================================================
+  // Phase 2.2 优化：删除未使用的 pack_changes 审计日志表
+  // =========================================================================
+
+  // 迁移：删除 pack_changes 表（已被证实未使用，变更检测通过版本号对比实现）
+  try {
+    db.exec(`DROP TABLE IF EXISTS pack_changes`);
+  } catch (err) {
+    console.warn('[DB Migration] pack_changes 表删除失败:', err.message);
+  }
 }
 
 module.exports = { getDb };
