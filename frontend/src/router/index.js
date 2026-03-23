@@ -86,14 +86,6 @@ const routes = [
     meta: { requiresAuth: true },
   },
 
-  // ── 创作者申请 ────────────────────────────────────────────
-  {
-    path: '/creator/apply',
-    name: 'creator-apply',
-    component: () => import('@/views/CreatorApplyView.vue'),
-    meta: { requiresAuth: true },
-  },
-
   // ── 管理后台（自行管理鉴权，无需 requiresAuth） ───────────
   {
     path: '/admin',

@@ -12,7 +12,6 @@ const authRouter = require('./routes/auth');
 const storiesRouter = require('./routes/stories');
 const tagsRouter = require('./routes/tags');
 const workshopRouter = require('./routes/workshop');
-const creatorRouter = require('./routes/creator');
 const adminRouter = require('./routes/admin');
 
 const app = express();
@@ -131,7 +130,6 @@ app.use('/auth', authRouter);
 app.use('/api/stories', storiesRouter);
 app.use('/api/tags', tagsRouter);
 app.use('/api/workshop', workshopRouter);
-app.use('/api/creator', creatorRouter);
 app.use('/api/admin', adminRouter);
 
 // ─── 健康检查 ─────────────────────────────────────────────────────

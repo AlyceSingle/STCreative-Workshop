@@ -7,8 +7,8 @@ import CustomSelect from '../components/CustomSelect.vue'
 const router = useRouter()
 
 const TAB_STORAGE_KEY = 'admin_active_tab'
-const DEFAULT_TAB = 'applications'
-const VALID_TABS = ['applications', 'workshops', 'workshop-manage', 'users', 'packs']
+const DEFAULT_TAB = 'workshops'
+const VALID_TABS = ['workshops', 'workshop-manage', 'users', 'packs']
 
 function isValidTab(tab) {
   return VALID_TABS.includes(tab)
@@ -25,7 +25,6 @@ function saveActiveTab(tab) {
 
 function createLoadedTabsState() {
   return {
-    applications: false,
     workshops: false,
     'workshop-manage': false,
     users: false,
@@ -109,11 +108,6 @@ async function switchTab(tab) {
 }
 
 async function loadTabData(tab) {
-  if (tab === 'applications') {
-    await loadApplications()
-    return
-  }
-
   if (tab === 'workshops') {
     await loadWorkshopApps()
     return
@@ -137,44 +131,6 @@ async function loadTabData(tab) {
 async function initializeAdminView() {
   resetLoadedTabs()
   await loadTabData(activeTab.value)
-}
-
-// ── 申请管理 ──────────────────────────────────────────────────────────
-const applications = ref([])
-const appFilter = ref('pending')
-const appLoading = ref(false)
-const reviewModal = ref(null)
-const reviewNote = ref('')
-const reviewLoading = ref(false)
-
-async function loadApplications() {
-  appLoading.value = true
-  try {
-    const data = await adminApi.fetchApplications(appFilter.value)
-    applications.value = data.data || []
-    markTabLoaded('applications')
-  } catch {
-    applications.value = []
-  } finally {
-    appLoading.value = false
-  }
-}
-
-function openReview(app, action) {
-  reviewModal.value = { app, action }
-  reviewNote.value = ''
-}
-
-async function submitReview() {
-  if (!reviewModal.value) return
-  reviewLoading.value = true
-  try {
-    await adminApi.reviewApplication(reviewModal.value.app.id, reviewModal.value.action, reviewNote.value)
-    reviewModal.value = null
-    await loadApplications()
-  } finally {
-    reviewLoading.value = false
-  }
 }
 
 // ── 用户管理 ──────────────────────────────────────────────────────────
@@ -368,12 +324,11 @@ const STATUS_COLOR = {
 }
 
 function roleLabel(role) {
-  return { user: '普通用户', creator: '创作者', admin: '管理员' }[role] || role
+  return { user: '普通用户', admin: '管理员' }[role] || role
 }
 
 function roleStyle(role) {
   if (role === 'admin') return 'background:#FEE2E2; color:#991B1B; border-color:#FCA5A5;'
-  if (role === 'creator') return 'background:#DCFCE7; color:#14532D; border-color:#22C55E;'
   return 'background:#F1F5F9; color:#475569; border-color:#CBD5E1;'
 }
 
@@ -451,21 +406,6 @@ onMounted(async () => {
 
         <!-- 导航菜单 -->
         <nav class="flex-1 p-4 flex flex-col gap-2">
-          <button
-            class="nav-btn"
-            :class="{ 'is-active': activeTab === 'applications' }"
-            @click="switchTab('applications')"
-          >
-            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-              <polyline points="14 2 14 8 20 8"></polyline>
-              <line x1="16" y1="13" x2="8" y2="13"></line>
-              <line x1="16" y1="17" x2="8" y2="17"></line>
-              <polyline points="10 9 9 9 8 9"></polyline>
-            </svg>
-            <span>申请管理</span>
-          </button>
-
           <button
             class="nav-btn"
             :class="{ 'is-active': activeTab === 'workshops' }"
@@ -549,53 +489,6 @@ onMounted(async () => {
 
         <main class="flex-1 px-4 pt-3 pb-4 lg:px-8 lg:pt-4 lg:pb-8 max-w-7xl w-full mx-auto">
 
-      <!-- ─── 申请管理 ──────────────────────────────────────────────── -->
-      <div v-show="activeTab==='applications'">
-        <div class="flex flex-col items-start justify-between gap-3 mb-5 sm:flex-row sm:items-center">
-          <h3 class="text-lg font-bold" style="font-family:'Fredoka',sans-serif; color:#431407;">申请管理</h3>
-          <button class="btn-secondary text-sm admin-refresh-btn" :disabled="appLoading" @click="loadApplications">刷新列表</button>
-        </div>
-        <div class="flex gap-2 mb-4 flex-wrap">
-          <button v-for="f in [{k:'pending',l:'待审核'},{k:'approved',l:'已通过'},{k:'rejected',l:'已拒绝'},{k:'all',l:'全部'}]" :key="f.k"
-            class="px-4 py-1.5 rounded-full text-xs font-bold transition-all"
-            :style="appFilter===f.k ? 'background:#431407; color:white;' : 'background:#FFF7ED; color:#78350F; border:1.5px solid #FDBA74;'"
-            @click="appFilter=f.k; loadApplications()">
-            {{ f.l }}
-          </button>
-        </div>
-        <div v-if="appLoading" class="flex justify-center py-12">
-          <div class="w-8 h-8 rounded-full animate-spin" style="border:3px solid #FED7AA; border-top-color:#F97316;"></div>
-        </div>
-        <div v-else-if="!applications.length" class="text-center py-12 text-sm" style="color:#A8A29E; font-family:'Nunito',sans-serif;">暂无记录</div>
-        <div v-else class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
-          <div v-for="app in applications" :key="app.id" class="card h-full p-4 flex flex-col sm:flex-row sm:items-start gap-4">
-            <img :src="app.user.avatar ? avatarUrl(app.user.discord_id, app.user.avatar) : avatarUrl(app.user.discord_id, null)"
-              class="w-10 h-10 rounded-full object-cover flex-shrink-0" style="border:2px solid #FDBA74;" />
-            <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-2 flex-wrap mb-1">
-                <span class="font-bold text-sm" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ app.user.username }}</span>
-                <span class="text-xs px-2 py-0.5 rounded-full border font-bold" :style="STATUS_COLOR[app.status]">{{ STATUS_MAP[app.status] }}</span>
-              </div>
-              <p class="text-xs mb-2" style="color:#A8A29E; font-family:'Nunito',sans-serif;">申请于 {{ fmtDate(app.applied_at) }}</p>
-              <p class="text-sm rounded-xl px-3 py-2" style="background:#FFFBF0; border:1.5px solid #FED7AA; color:#78350F; font-family:'Nunito',sans-serif; white-space:pre-wrap; word-break:break-word;">{{ app.reason }}</p>
-              <div v-if="app.platform || app.published_works" class="flex flex-col gap-1 mt-1.5">
-                <p v-if="app.platform" class="text-xs" style="color:#78716C; font-family:'Nunito',sans-serif;">
-                  <span class="font-bold" style="color:#431407;">发布平台：</span>{{ app.platform }}
-                </p>
-                <p v-if="app.published_works" class="text-xs" style="color:#78716C; font-family:'Nunito',sans-serif; white-space:pre-wrap; word-break:break-word;">
-                  <span class="font-bold" style="color:#431407;">已发布作品：</span>{{ app.published_works }}
-                </p>
-              </div>
-              <p v-if="app.admin_note" class="text-xs mt-1.5" style="color:#EF4444; font-family:'Nunito',sans-serif;">备注：{{ app.admin_note }}</p>
-            </div>
-            <div v-if="app.status==='pending'" class="flex gap-2 flex-shrink-0">
-              <button class="btn-primary text-xs px-3 py-1.5" @click="openReview(app,'approve')">通过</button>
-              <button class="btn-danger text-xs px-3 py-1.5" @click="openReview(app,'reject')">拒绝</button>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <!-- ─── 工坊管理 ──────────────────────────────────────────────── -->
       <div v-show="activeTab==='workshop-manage'">
         <div class="flex flex-col items-start justify-between gap-3 mb-5 sm:flex-row sm:items-center">
@@ -675,7 +568,6 @@ onMounted(async () => {
             :options="[
               { value: '', label: '全部角色' },
               { value: 'user', label: '普通用户' },
-              { value: 'creator', label: '创作者' },
               { value: 'admin', label: '管理员' }
             ]"
             placeholder="全部角色"
@@ -718,7 +610,7 @@ onMounted(async () => {
             <div class="flex gap-1.5 flex-wrap flex-shrink-0 w-full xl:w-auto justify-end" @click.stop>
               <button v-if="!u.is_banned" class="text-xs px-2.5 py-1.5 rounded-xl font-bold cursor-pointer transition-all whitespace-nowrap" style="background:#FEF9C3; color:#854D0E; border:1.5px solid #FDE047;" @click="changeBanStatus(u.id, true, u.username)">封禁</button>
               <button v-else class="text-xs px-2.5 py-1.5 rounded-xl font-bold cursor-pointer transition-all whitespace-nowrap" style="background:#DCFCE7; color:#14532D; border:1.5px solid #22C55E;" @click="changeBanStatus(u.id, false, u.username)">解封</button>
-              <button v-if="u.role!=='creator'" class="text-xs px-2.5 py-1.5 rounded-xl font-bold cursor-pointer transition-all whitespace-nowrap" style="background:#DCFCE7; color:#14532D; border:1.5px solid #22C55E;" @click="changeRole(u.id,'creator')">升为创作者</button>
+              <button v-if="u.role!=='admin'" class="text-xs px-2.5 py-1.5 rounded-xl font-bold cursor-pointer transition-all whitespace-nowrap" style="background:#FEE2E2; color:#991B1B; border:1.5px solid #FCA5A5;" @click="changeRole(u.id,'admin')">升为管理员</button>
               <button v-if="u.role!=='user'" class="text-xs px-2.5 py-1.5 rounded-xl font-bold cursor-pointer transition-all whitespace-nowrap" style="background:#F1F5F9; color:#475569; border:1.5px solid #CBD5E1;" @click="changeRole(u.id,'user')">降为普通</button>
               <button class="text-xs px-2.5 py-1.5 rounded-xl font-bold cursor-pointer transition-all whitespace-nowrap" style="background:#FEE2E2; color:#991B1B; border:1.5px solid #FCA5A5;" @click="deleteUser(u.id,u.username)">删除</button>
             </div>
@@ -821,9 +713,12 @@ onMounted(async () => {
                 </span>
               </div>
               <p class="text-xs mb-1" style="color:#A8A29E; font-family:'Nunito',sans-serif;">
-                申请人：{{ w.author ? w.author.username : '内置' }} · 申请于 {{ fmtDate(w.created_at) }}
+                申请人：{{ w.applicant_name || (w.author ? w.author.username : '内置') }} · 申请于 {{ fmtDate(w.created_at) }}
               </p>
               <p v-if="w.description" class="text-sm rounded-xl px-3 py-2 mt-1" style="background:#FFFBF0; border:1.5px solid #FED7AA; color:#78350F; font-family:'Nunito',sans-serif; word-break:break-word;">{{ w.description }}</p>
+              <p v-if="w.applicant_bio" class="text-xs mt-1.5" style="color:#78716C; font-family:'Nunito',sans-serif; white-space:pre-wrap; word-break:break-word;">
+                <span class="font-bold" style="color:#431407;">补充说明：</span>{{ w.applicant_bio }}
+              </p>
               <p v-if="w.worldbook" class="text-xs mt-1" style="color:#78716C; font-family:'Nunito',sans-serif;">
                 <span class="font-bold" style="color:#431407;">默认世界书：</span>{{ w.worldbook }}
               </p>
@@ -873,7 +768,7 @@ onMounted(async () => {
 
               <!-- 统计栏 -->
               <div class="flex gap-6 px-6 text-center">
-                <div v-if="userDetail.user.role==='creator' || userDetail.user.role==='admin'">
+                <div>
                   <p class="text-2xl font-bold" style="font-family:'Fredoka',sans-serif; color:#F97316;">{{ userDetail.workshops.length }}</p>
                   <p class="text-xs" style="color:#A8A29E; font-family:'Nunito',sans-serif;">工坊数</p>
                 </div>
@@ -889,8 +784,8 @@ onMounted(async () => {
 
               <!-- 内容区 -->
               <div class="px-6 pb-6 overflow-y-auto flex-1 flex flex-col gap-5">
-                <!-- 工坊列表：仅创作者/管理员显示 -->
-                <div v-if="userDetail.user.role==='creator' || userDetail.user.role==='admin'">
+                <!-- 工坊列表 -->
+                <div>
                   <p class="text-sm font-bold mb-3" style="font-family:'Fredoka',sans-serif; color:#78350F;">工坊列表</p>
                   <div v-if="!userDetail.workshops.length" class="text-sm text-center py-4" style="color:#A8A29E; font-family:'Nunito',sans-serif;">暂无工坊</div>
                   <div v-else class="flex flex-col gap-2">
@@ -938,40 +833,6 @@ onMounted(async () => {
                 </div>
               </div>
             </template>
-          </div>
-        </div>
-      </Transition>
-    </Teleport>
-
-    <!-- ═══ 审批弹窗 ═════════════════════════════════════════════════════ -->
-    <Teleport to="body">
-      <Transition enter-active-class="transition duration-200 ease-out" enter-from-class="opacity-0" enter-to-class="opacity-100"
-        leave-active-class="transition duration-150 ease-in" leave-from-class="opacity-100" leave-to-class="opacity-0">
-        <div v-if="reviewModal" class="fixed inset-0 z-50 flex items-center justify-center p-4" style="background:rgba(0,0,0,0.35);" @click.self="reviewModal=null">
-          <div class="w-full max-w-sm p-6 flex flex-col gap-4" style="background:#FFFBF0; border:2.5px solid #FDBA74; border-radius:20px; box-shadow:6px 6px 0 #FDBA74;">
-            <h3 class="font-bold text-lg" style="font-family:'Fredoka',sans-serif; color:#431407;">
-              {{ reviewModal.action==='approve' ? '通过申请' : '拒绝申请' }}
-            </h3>
-            <p class="text-sm" style="color:#78716C; font-family:'Nunito',sans-serif;">
-              用户：<strong>{{ reviewModal.app.user.username }}</strong>
-            </p>
-            <div>
-              <label class="block text-sm font-bold mb-1.5" style="font-family:'Fredoka',sans-serif; color:#431407;">
-                管理员备注（可选）
-              </label>
-              <textarea v-model="reviewNote" class="input resize-none text-sm" rows="3"
-                :placeholder="reviewModal.action==='approve' ? '欢迎加入…（可不填）' : '请说明拒绝原因…'"
-                style="font-family:'Nunito',sans-serif;"></textarea>
-            </div>
-            <div class="flex gap-3">
-              <button v-if="reviewModal.action==='approve'" class="btn-primary flex-1" :disabled="reviewLoading" @click="submitReview">
-                {{ reviewLoading ? '处理中…' : '确认通过' }}
-              </button>
-              <button v-else class="btn-danger flex-1" :disabled="reviewLoading" @click="submitReview">
-                {{ reviewLoading ? '处理中…' : '确认拒绝' }}
-              </button>
-              <button class="btn-secondary flex-1" @click="reviewModal=null">取消</button>
-            </div>
           </div>
         </div>
       </Transition>

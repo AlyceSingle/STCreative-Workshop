@@ -138,23 +138,18 @@ function initSchema() {
     // 列已存在，忽略
   }
 
-  // 创建者申请表
+  // 迁移：删除已废弃的 creator_applications 表
   try {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS creator_applications (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-        status TEXT NOT NULL DEFAULT 'pending',
-        reason TEXT NOT NULL DEFAULT '',
-        admin_note TEXT NOT NULL DEFAULT '',
-        applied_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        reviewed_at DATETIME
-      );
-      CREATE INDEX IF NOT EXISTS idx_applications_status ON creator_applications(status);
-      CREATE INDEX IF NOT EXISTS idx_applications_user ON creator_applications(user_id);
-    `);
+    db.exec(`DROP TABLE IF EXISTS creator_applications`);
   } catch (_) {
-    // 表已存在，忽略
+    // 表不存在，忽略
+  }
+
+  // 迁移：将所有 creator 角色降级为 user（取消创作者身份）
+  try {
+    db.exec(`UPDATE users SET role = 'user' WHERE role = 'creator'`);
+  } catch (_) {
+    // 忽略
   }
 
   // 迁移：给 workshop_packs 添加 section 列（分区标识）
@@ -185,16 +180,16 @@ function initSchema() {
     // 列已存在，忽略
   }
 
-  // 迁移：给 creator_applications 添加 platform 列（发布平台）
+  // 迁移：给 workshops 添加 applicant_name 列（申请人网名）
   try {
-    db.exec(`ALTER TABLE creator_applications ADD COLUMN platform TEXT NOT NULL DEFAULT ''`);
+    db.exec(`ALTER TABLE workshops ADD COLUMN applicant_name TEXT NOT NULL DEFAULT ''`);
   } catch (_) {
     // 列已存在，忽略
   }
 
-  // 迁移：给 creator_applications 添加 published_works 列（已发布作品）
+  // 迁移：给 workshops 添加 applicant_bio 列（申请人简介）
   try {
-    db.exec(`ALTER TABLE creator_applications ADD COLUMN published_works TEXT NOT NULL DEFAULT ''`);
+    db.exec(`ALTER TABLE workshops ADD COLUMN applicant_bio TEXT NOT NULL DEFAULT ''`);
   } catch (_) {
     // 列已存在，忽略
   }

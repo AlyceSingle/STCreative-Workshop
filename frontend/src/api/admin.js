@@ -26,14 +26,6 @@ async function logout() {
   return request.post('/api/admin/logout')
 }
 
-async function fetchApplications(status = 'pending') {
-  return request.get(`/api/admin/applications${buildQuery({ status })}`)
-}
-
-async function reviewApplication(appId, action, note = '') {
-  return request.put(`/api/admin/applications/${appId}`, { action, note })
-}
-
 async function fetchUsers(params = {}) {
   return request.get(`/api/admin/users${buildQuery({ page: 1, limit: 20, ...params })}`)
 }
@@ -86,8 +78,6 @@ export default {
   checkLogin,
   login,
   logout,
-  fetchApplications,
-  reviewApplication,
   fetchUsers,
   changeUserRole,
   deleteUser,
