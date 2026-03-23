@@ -35,7 +35,13 @@ request.interceptors.response.use(
 
         if (response) {
             const { status, data } = response
-            const errorMsg = data?.error || '请求失败'
+            let errorMsg = data?.error || '请求失败'
+
+            // 特殊错误类型：需要角色卡环境，显示更久
+            const isRequiresCharacterCard = errorMsg === 'requires_character_card'
+            if (isRequiresCharacterCard) {
+                errorMsg = data?.message || '取消订阅失败，包含正则/开场白，请进入角色卡内取消'
+            }
 
             switch (status) {
                 case 401:
@@ -59,7 +65,7 @@ request.interceptors.response.use(
                     console.error(`[Axios] 请求错误 (${status}):`, errorMsg)
             }
 
-            toast.error(errorMsg)
+            toast.error(errorMsg, isRequiresCharacterCard ? { duration: 5000 } : {})
 
             return Promise.reject(data?.error || error.message)
         }

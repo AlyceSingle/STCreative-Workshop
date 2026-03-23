@@ -742,6 +742,8 @@ async function handleSubscribe() {
   
   // 取消订阅：无需确认，直接执行
   if (isSubscribed.value) {
+    console.log("调用我handleSubscribe");
+    
     await workshopStore.toggleSubscribe(pack.value, null, 'unsubscribe')
     return
   }
