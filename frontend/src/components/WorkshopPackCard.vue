@@ -1,10 +1,10 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import PackSubscribeModal from '@/components/PackSubscribeModal.vue'
+import PackUpdateModal from '@/components/PackUpdateModal.vue'
 import { useWorkshopStore } from '@/stores/workshop'
 import { useAuthStore } from '@/stores/auth'
-import ConfirmModal from '@/components/ConfirmModal.vue'
-import PackUpdateModal from '@/components/PackUpdateModal.vue'
 import { sanitizeWorkshopQuery } from '@/utils/workshopViewState'
 
 const props = defineProps({
@@ -285,97 +285,19 @@ function goToDetail() {
   </div>
 
   <!-- 订阅确认弹窗 -->
-  <ConfirmModal
+  <PackSubscribeModal
     v-if="showSubConfirm"
-    title="订阅模组"
-    confirm-text="确认订阅"
-    cancel-text="取消"
-    :confirm-disabled="hasRiskyContent && !isCharacterConfirmed"
+    :pack-title="pack.title"
+    :entries="modalEntries"
+    v-model:selected-entry-ids="selectedEntryIds"
+    v-model:target-worldbook-name="targetWorldbookName"
+    v-model:character-confirmed="isCharacterConfirmed"
+    :show-worldbook-selector="workshopStore.isFromStExtension() && workshopStore.stConnected"
+    :default-worldbook-name="workshopStore.worldbookName"
+    :worldbook-list="workshopStore.worldbookList"
     @confirm="confirmSubscribe"
     @cancel="cancelSubscribe"
-  >
-    <div class="flex flex-col gap-4">
-      <p v-html="`确定要订阅「<strong>${pack.title}</strong>」吗？`"></p>
-
-      <!-- 风险提示与确认 -->
-      <div v-if="hasRiskyContent" class="flex flex-col gap-2 p-3 rounded-xl bg-orange-50 border border-orange-200">
-        <div class="flex items-start gap-2">
-          <span class="text-lg leading-none">⚠️</span>
-          <div class="text-xs text-orange-800">
-            <p class="font-bold mb-1">注意：此订阅包含正则脚本或开场白。</p>
-            <p>这些内容会直接关联到当前选中的角色卡。如果当前未进入角色卡，或进入了错误的角色卡，可能会导致数据错乱。</p>
-          </div>
-        </div>
-        <label class="flex items-center gap-2 mt-2 pt-2 border-t border-orange-200 cursor-pointer select-none">
-          <input type="checkbox" v-model="isCharacterConfirmed" class="w-4 h-4 text-orange-600 rounded focus:ring-orange-500 accent-orange-600" />
-          <span class="text-xs font-bold text-orange-700">我确认 ST 当前已进入正确的角色卡</span>
-        </label>
-      </div>
-      
-      <div v-if="workshopStore.isFromStExtension() && workshopStore.stConnected && !hasRiskyContent" class="flex flex-col gap-1.5 p-3 rounded-xl bg-[#F0FDF4] border border-[#DCFCE7]">
-        <label class="text-[10px] font-bold text-[#16A34A] uppercase tracking-wider">选择目标世界书</label>
-        <select 
-          v-model="targetWorldbookName"
-          class="input text-sm py-1.5"
-          style="border-color:#22C55E; background: white;"
-          @click.stop
-        >
-          <option v-if="workshopStore.worldbookName" :value="workshopStore.worldbookName">
-            {{ workshopStore.worldbookName }} (工坊作者默认)
-          </option>
-          <option 
-            v-for="wb in workshopStore.worldbookList.filter(w => w !== workshopStore.worldbookName)" 
-            :key="wb" 
-            :value="wb"
-          >
-            {{ wb }}
-          </option>
-        </select>
-        <p class="text-[10px] text-[#16A34A] opacity-80 mt-1">
-          * 条目将插入到所选世界书中。默认为工坊作者推荐的世界书。
-        </p>
-      </div>
-
-      <!-- 条目选择列表 -->
-      <div v-if="modalEntries && modalEntries.length > 0" class="flex flex-col gap-2 p-3 rounded-xl bg-[#FFFBF0] border border-[#FDBA74]">
-        <div class="flex items-center justify-between">
-          <label class="text-[10px] font-bold text-[#78350F] uppercase tracking-wider">选择要插入的条目</label>
-          <button 
-            @click.stop="selectedEntryIds = selectedEntryIds.length === modalEntries.length ? [] : modalEntries.map(e => e.id)"
-            class="text-[10px] font-bold px-2 py-0.5 rounded"
-            style="background:#FFF7ED; color:#EA580C; border:1px solid #FDBA74;"
-          >
-            {{ selectedEntryIds.length === modalEntries.length ? '取消全选' : '全选' }}
-          </button>
-        </div>
-        <div class="max-h-[200px] overflow-y-auto custom-scrollbar flex flex-col gap-1">
-          <label 
-            v-for="entry in modalEntries" 
-            :key="entry.id"
-            class="flex items-start gap-2 p-2 rounded-lg hover:bg-[#FFF7ED] transition-colors cursor-pointer"
-            style="border:1px solid transparent;"
-            :style="selectedEntryIds.includes(entry.id) ? 'background:#FFF7ED; border-color:#FDBA74;' : ''"
-            @click.stop
-          >
-            <input 
-              type="checkbox"
-              :value="entry.id"
-              v-model="selectedEntryIds"
-              class="mt-0.5 flex-shrink-0"
-              style="accent-color:#F97316;"
-            />
-            <div class="flex-1 min-w-0">
-              <div class="text-xs font-bold truncate" style="color:#431407;">{{ entry.name }}</div>
-              <div v-if="entry.content" class="text-[10px] whitespace-pre-line mt-0.5" style="color:#78716C; white-space:pre-line;">{{ entry.content }}</div>
-            </div>
-          </label>
-        </div>
-        <p class="text-[10px] text-[#78350F] opacity-80">
-          已选择 {{ selectedEntryIds.length }} / {{ modalEntries.length }} 条
-        </p>
-      </div>
-    </div>
-  </ConfirmModal>
+  />
 
   <PackUpdateModal
     v-if="showUpdateModal"
