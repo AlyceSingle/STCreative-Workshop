@@ -315,7 +315,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { RouterLink, useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useWorkshopStore } from '@/stores/workshop'
@@ -331,8 +331,17 @@ const modalSearch = ref('')
 
 const showLoginToast = ref(false)
 
+async function refreshWorkshopDirectory() {
+  await workshopStore.fetchWorkshops()
+}
+
 onMounted(() => {
-  workshopStore.fetchWorkshops()
+  refreshWorkshopDirectory()
+})
+
+watch(() => authStore.user?.id, async (newUserId, oldUserId) => {
+  if (newUserId === oldUserId) return
+  await refreshWorkshopDirectory()
 })
 
 // 按名称实时过滤工坊列表

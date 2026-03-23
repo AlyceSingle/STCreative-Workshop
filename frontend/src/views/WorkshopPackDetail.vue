@@ -653,6 +653,7 @@ const updateBadgeText = computed(() => {
 // 更新同步弹窗状态
 const showUpdateModal = ref(false)
 const syncingUpdates = ref(false)
+const refreshingPack = ref(false)
 
 // Phase 2: 打开更新详情弹窗
 function openUpdateModal() {
@@ -673,6 +674,24 @@ function getPackNavigationQuery(extraQuery = {}) {
   }
 }
 
+async function initializePackDetail(result) {
+  if (!result) {
+    router.push(buildWorkshopBackRoute(sanitizeWorkshopQuery(route.query)))
+    return
+  }
+
+  const slug = result.workshop?.slug || result.section
+  if (slug) {
+    workshopStore.loadWorldbookForSection(slug)
+  }
+
+  await workshopStore.scanSubscribedPacks()
+
+  if (result.is_subscribed) {
+    await workshopStore.fetchPackChanges(packId.value)
+  }
+}
+
 // Phase 2: 选择性同步更新
 async function handleSyncUpdatesSelective(selectedEntryIds) {
   if (!pack.value || syncingUpdates.value) return
@@ -681,9 +700,20 @@ async function handleSyncUpdatesSelective(selectedEntryIds) {
     await workshopStore.syncPackUpdatesSelective(pack.value.id, selectedEntryIds)
     showUpdateModal.value = false
     // 刷新 pack 数据以获取最新条目
-    await workshopStore.fetchPack(pack.value.id)
+    await workshopStore.fetchPack(pack.value.id, { showLoading: false })
   } finally {
     syncingUpdates.value = false
+  }
+}
+
+async function refreshPackDetail() {
+  if (refreshingPack.value) return
+  refreshingPack.value = true
+  try {
+    const result = await workshopStore.fetchPack(packId.value, { showLoading: false })
+    await initializePackDetail(result)
+  } finally {
+    refreshingPack.value = false
   }
 }
 
@@ -694,22 +724,9 @@ function goBackToWorkshop() {
 
 onMounted(async () => {
   await workshopStore.initStExtensionMode()
-  const result = await workshopStore.fetchPack(packId.value)
-  if (!result) {
-    router.push(buildWorkshopBackRoute(sanitizeWorkshopQuery(route.query)))
-    return
-  }
-  // 按 pack 所属工坊设置世界书名称
-  const slug = result.workshop?.slug || result.section
-  if (slug) {
-    workshopStore.loadWorldbookForSection(slug)
-  }
-  await workshopStore.scanSubscribedPacks()
-  
-  // Phase 2: 如果已订阅，检查更新
-  if (result.is_subscribed) {
-    await workshopStore.fetchPackChanges(packId.value)
-  }
+  const cachedPack = workshopStore.currentPack?.id === packId.value ? workshopStore.currentPack : null
+  const result = cachedPack || await workshopStore.fetchPack(packId.value)
+  await initializePackDetail(result)
 })
 
 async function handleLike() {
@@ -884,9 +901,34 @@ watch(() => workshopStore.stNotification, (notif) => {
     </Transition>
 
     <!-- 返回按钮 -->
-    <button class="btn-secondary text-sm mb-6" @click="goBackToWorkshop">
-      ← 返回工坊
-    </button>
+    <div class="mb-6 flex items-center gap-3 flex-wrap">
+      <button class="btn-secondary text-sm" @click="goBackToWorkshop">
+        ← 返回工坊
+      </button>
+      <button
+        class="btn-secondary text-sm inline-flex items-center gap-2"
+        :disabled="refreshingPack"
+        @click="refreshPackDetail"
+      >
+        <svg
+          class="w-4 h-4"
+          :class="{ 'animate-spin': refreshingPack }"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M23 4v6h-6"/>
+          <path d="M1 20v-6h6"/>
+          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/>
+          <path d="M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+        </svg>
+        <span v-if="refreshingPack">刷新中…</span>
+        <span v-else>刷新详情</span>
+      </button>
+    </div>
 
     <!-- 加载中 -->
     <div v-if="workshopStore.currentPackLoading" class="flex justify-center py-20">

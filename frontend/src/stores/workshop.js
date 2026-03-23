@@ -234,8 +234,11 @@ export const useWorkshopStore = defineStore('workshop', () => {
     }
   }
 
-  async function fetchPack(packId) {
-    currentPackLoading.value = true
+  async function fetchPack(packId, options = {}) {
+    const { showLoading = true } = options
+    if (showLoading) {
+      currentPackLoading.value = true
+    }
     error.value = null
     try {
       const json = await workshopApi.fetchPack(packId)
@@ -245,7 +248,9 @@ export const useWorkshopStore = defineStore('workshop', () => {
       error.value = err.message || '获取 Pack 详情失败'
       return null
     } finally {
-      currentPackLoading.value = false
+      if (showLoading) {
+        currentPackLoading.value = false
+      }
     }
   }
 
