@@ -1,9 +1,10 @@
 <script setup>
 import { ref, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useWorkshopStore } from '@/stores/workshop'
 import { useAuthStore } from '@/stores/auth'
 import ConfirmModal from '@/components/ConfirmModal.vue'
+import { sanitizeWorkshopQuery } from '@/utils/workshopViewState'
 
 const props = defineProps({
   pack: {
@@ -13,6 +14,7 @@ const props = defineProps({
 })
 
 const router = useRouter()
+const route = useRoute()
 const workshopStore = useWorkshopStore()
 const authStore = useAuthStore()
 
@@ -121,7 +123,11 @@ function cancelSubscribe() {
 }
 
 function goToDetail() {
-  router.push({ name: 'workshop-pack-detail', params: { packId: props.pack.id } })
+  router.push({
+    name: 'workshop-pack-detail',
+    params: { packId: props.pack.id },
+    query: sanitizeWorkshopQuery(route.query),
+  })
 }
 </script>
 

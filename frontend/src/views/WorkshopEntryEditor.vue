@@ -3,6 +3,7 @@ import { ref, reactive, onMounted, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useWorkshopStore } from '@/stores/workshop'
 import { useAuthStore } from '@/stores/auth'
+import { sanitizeWorkshopQuery } from '@/utils/workshopViewState'
 
 const router = useRouter()
 const route = useRoute()
@@ -22,6 +23,17 @@ const saving = ref(false)
 const loadingEntry = ref(false)
 const advancedOpen = ref(false)
 const fileInput = ref(null)
+
+function getEntryEditorQuery(slug = null) {
+  return sanitizeWorkshopQuery({
+    ...(slug ? { workshop: slug } : {}),
+    ...route.query,
+  })
+}
+
+function getCurrentPackWorkshopSlug() {
+  return workshopStore.currentPack?.workshop?.slug || workshopStore.currentPack?.section || null
+}
 
 // 表单数据
 const form = reactive({
@@ -90,28 +102,42 @@ onMounted(async () => {
 
   // 未登录则跳转回工坊
   if (!authStore.isLoggedIn) {
-    router.push({ name: 'workshop' })
+    router.push({ name: 'workshop', query: getEntryEditorQuery() })
     return
   }
 
   // 确保 pack 存在
   if (!workshopStore.currentPack || workshopStore.currentPack.id !== packId.value) {
     const pack = await workshopStore.fetchPack(packId.value)
-    if (!pack) { router.push({ name: 'workshop' }); return }
+    if (!pack) {
+      router.push({ name: 'workshop', query: getEntryEditorQuery() })
+      return
+    }
   }
 
   if (isEdit.value) {
     loadingEntry.value = true
     const entry = await workshopStore.fetchEntry(route.params.entryId)
     loadingEntry.value = false
-    if (!entry) { router.push({ name: 'workshop-pack-detail', params: { packId: packId.value } }); return }
+    if (!entry) {
+      router.push({
+        name: 'workshop-pack-detail',
+        params: { packId: packId.value },
+        query: getEntryEditorQuery(getCurrentPackWorkshopSlug()),
+      })
+      return
+    }
 
     // 仅条目作者或 pack 作者可编辑
     const pack = workshopStore.currentPack
     const isEntryAuthor = authStore.user && authStore.user.id === entry.author_id
     const isPackAuthor = pack && authStore.user && authStore.user.id === pack.author.id
     if (!isEntryAuthor && !isPackAuthor) {
-      router.push({ name: 'workshop-pack-detail', params: { packId: packId.value } })
+      router.push({
+        name: 'workshop-pack-detail',
+        params: { packId: packId.value },
+        query: getEntryEditorQuery(getCurrentPackWorkshopSlug()),
+      })
       return
     }
 
@@ -219,11 +245,21 @@ async function handleSubmit() {
   }
 
   saving.value = false
-  if (ok) router.push({ name: 'workshop-pack-detail', params: { packId: packId.value } })
+  if (ok) {
+    router.push({
+      name: 'workshop-pack-detail',
+      params: { packId: packId.value },
+      query: getEntryEditorQuery(getCurrentPackWorkshopSlug()),
+    })
+  }
 }
 
 function goBack() {
-  router.push({ name: 'workshop-pack-detail', params: { packId: packId.value } })
+  router.push({
+    name: 'workshop-pack-detail',
+    params: { packId: packId.value },
+    query: getEntryEditorQuery(getCurrentPackWorkshopSlug()),
+  })
 }
 </script>
 

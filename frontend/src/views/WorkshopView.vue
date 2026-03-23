@@ -393,6 +393,15 @@ const newModRoute = computed(() => ({
   name: 'workshop-pack-new',
   query: workshopSlug.value ? { workshop: workshopSlug.value } : {},
 }))
+
+const editWorkshopRoute = computed(() => ({
+  name: 'workshop-edit',
+  params: { id: currentWorkshop.value?.id },
+  query: {
+    from: 'workshop',
+    ...(workshopSlug.value ? { workshop: workshopSlug.value } : {}),
+  },
+}))
 </script>
 
 <template>
@@ -453,7 +462,7 @@ const newModRoute = computed(() => ({
         <!-- 工坊所有者：编辑工坊 -->
         <RouterLink
           v-if="currentWorkshop && currentWorkshop.author_id && authStore.user?.id === currentWorkshop.author_id"
-          :to="{ name: 'workshop-edit', params: { id: currentWorkshop.id } }"
+          :to="editWorkshopRoute"
           class="btn-secondary text-sm"
         >
           <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">

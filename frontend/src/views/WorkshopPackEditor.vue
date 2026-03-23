@@ -4,6 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useWorkshopStore } from '@/stores/workshop'
 import { useAuthStore } from '@/stores/auth'
 import { TAG_GROUPS } from '@/config/sections'
+import { sanitizeWorkshopQuery } from '@/utils/workshopViewState'
 
 const router = useRouter()
 const route = useRoute()
@@ -30,6 +31,17 @@ const form = ref({
 // 新建时记录来源工坊 slug（用于 goBack 跳转）
 const sourceWorkshopSlug = ref(workshopSlugFromQuery.value)
 
+function getWorkshopSlugById(workshopId) {
+  return workshopStore.workshops.find(w => w.id === workshopId)?.slug || null
+}
+
+function getPackEditorQuery(slug = null) {
+  return sanitizeWorkshopQuery({
+    ...(slug ? { workshop: slug } : {}),
+    ...route.query,
+  })
+}
+
 // ── 登录门控（仅需登录，无需创作者身份）────────────────────────────────
 onMounted(async () => {
   // 等待 auth 加载完成
@@ -39,7 +51,7 @@ onMounted(async () => {
     })
   }
   if (!authStore.isLoggedIn) {
-    router.replace({ name: 'workshop' })
+    router.replace({ name: 'workshop', query: getPackEditorQuery(sourceWorkshopSlug.value) })
     return
   }
 
@@ -63,18 +75,20 @@ onMounted(async () => {
     const pack = await workshopStore.fetchPack(packId.value)
     loadingPack.value = false
     if (!pack) {
-      router.push({ name: 'workshop' })
+      router.push({ name: 'workshop', query: getPackEditorQuery(sourceWorkshopSlug.value) })
       return
     }
     if (!authStore.user || authStore.user.id !== pack.author.id) {
-      router.push({ name: 'workshop' })
+      router.push({ name: 'workshop', query: getPackEditorQuery(pack.workshop?.slug || null) })
       return
     }
     form.value.title = pack.title
     form.value.description = pack.description
     form.value.workshop_id = pack.workshop?.id || null
     form.value.tags = Array.isArray(pack.tags) ? [...pack.tags] : []
-    sourceWorkshopSlug.value = pack.workshop?.slug || null
+    sourceWorkshopSlug.value = typeof route.query.workshop === 'string'
+      ? route.query.workshop
+      : (pack.workshop?.slug || null)
   }
 })
 
@@ -116,25 +130,41 @@ async function handleSubmit() {
   if (isEdit.value) {
     const ok = await workshopStore.updatePack(packId.value, payload)
     saving.value = false
-    if (ok) router.push({ name: 'workshop-pack-detail', params: { packId: packId.value } })
+    if (ok) {
+      router.push({
+        name: 'workshop-pack-detail',
+        params: { packId: packId.value },
+        query: getPackEditorQuery(getWorkshopSlugById(form.value.workshop_id) || sourceWorkshopSlug.value),
+      })
+    }
   } else {
     const result = await workshopStore.createPack(payload)
     saving.value = false
-    if (result) router.push({ name: 'workshop-pack-detail', params: { packId: result.id } })
+    if (result) {
+      router.push({
+        name: 'workshop-pack-detail',
+        params: { packId: result.id },
+        query: getPackEditorQuery(getWorkshopSlugById(form.value.workshop_id) || sourceWorkshopSlug.value),
+      })
+    }
   }
 }
 
 function goBack() {
   if (isEdit.value) {
-    router.push({ name: 'workshop-pack-detail', params: { packId: packId.value } })
+    router.push({
+      name: 'workshop-pack-detail',
+      params: { packId: packId.value },
+      query: getPackEditorQuery(sourceWorkshopSlug.value || getWorkshopSlugById(form.value.workshop_id)),
+    })
   } else {
     // 优先使用来源 slug，若无则从当前选中的工坊 ID 反查 slug
     const slug = sourceWorkshopSlug.value
-      || workshopStore.workshops.find(w => w.id === form.value.workshop_id)?.slug
+      || getWorkshopSlugById(form.value.workshop_id)
       || null
     router.push({
       name: 'workshop',
-      query: slug ? { workshop: slug } : {},
+      query: getPackEditorQuery(slug),
     })
   }
 }

@@ -5,7 +5,7 @@ import { useWorkshopStore } from '@/stores/workshop'
 import { useAuthStore } from '@/stores/auth'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import PackUpdateModal from '@/components/PackUpdateModal.vue'
-import { buildWorkshopBackRoute } from '@/utils/workshopViewState'
+import { buildWorkshopBackRoute, sanitizeWorkshopQuery } from '@/utils/workshopViewState'
 
 const router = useRouter()
 const route = useRoute()
@@ -659,6 +659,20 @@ function openUpdateModal() {
   showUpdateModal.value = true
 }
 
+function getPackWorkshopSlug() {
+  return pack.value?.workshop?.slug || pack.value?.section || null
+}
+
+function getPackNavigationQuery(extraQuery = {}) {
+  return {
+    ...sanitizeWorkshopQuery({
+      ...(getPackWorkshopSlug() ? { workshop: getPackWorkshopSlug() } : {}),
+      ...route.query,
+    }),
+    ...extraQuery,
+  }
+}
+
 // Phase 2: 选择性同步更新
 async function handleSyncUpdatesSelective(selectedEntryIds) {
   if (!pack.value || syncingUpdates.value) return
@@ -675,15 +689,14 @@ async function handleSyncUpdatesSelective(selectedEntryIds) {
 
 // 返回工坊时携带分区参数
 function goBackToWorkshop() {
-  const slug = pack.value?.workshop?.slug || pack.value?.section || null
-  router.push(buildWorkshopBackRoute(slug ? { workshop: slug } : {}))
+  router.push(buildWorkshopBackRoute(getPackNavigationQuery()))
 }
 
 onMounted(async () => {
   await workshopStore.initStExtensionMode()
   const result = await workshopStore.fetchPack(packId.value)
   if (!result) {
-    router.push({ name: 'workshop' })
+    router.push(buildWorkshopBackRoute(sanitizeWorkshopQuery(route.query)))
     return
   }
   // 按 pack 所属工坊设置世界书名称
@@ -1006,7 +1019,7 @@ watch(() => workshopStore.stNotification, (notif) => {
           <!-- 作者操作 -->
           <template v-if="isOwner">
             <RouterLink
-              :to="{ name: 'workshop-pack-edit', params: { packId: pack.id } }"
+              :to="{ name: 'workshop-pack-edit', params: { packId: pack.id }, query: getPackNavigationQuery() }"
               class="btn-secondary text-sm"
             >
               编辑模组
@@ -1104,7 +1117,7 @@ watch(() => workshopStore.stNotification, (notif) => {
           <button type="button" class="btn-secondary text-sm py-1.5 px-3" @click="handleOpenExport">
             导出 JSON
           </button>
-          <RouterLink v-if="canAddEntry" :to="{ name: 'workshop-entry-new', params: { packId: pack.id }, query: { type: 'worldbook' } }" class="btn-primary text-sm">
+          <RouterLink v-if="canAddEntry" :to="{ name: 'workshop-entry-new', params: { packId: pack.id }, query: getPackNavigationQuery({ type: 'worldbook' }) }" class="btn-primary text-sm">
             添加条目
           </RouterLink>
         </div>
@@ -1120,7 +1133,7 @@ watch(() => workshopStore.stNotification, (notif) => {
               <span class="text-xs font-bold px-2 py-0.5 rounded-full" style="background:#FFF7ED; color:#EA580C; border:1.5px solid #FDBA74;">{{ strategyLabel(entry.strategy_type) }}</span>
             </div>
             <div v-if="canEditEntry(entry)" class="flex items-center gap-2 flex-shrink-0">
-              <RouterLink :to="{ name: 'workshop-entry-edit', params: { packId: pack.id, entryId: entry.id } }" class="text-xs font-bold px-3 py-1 rounded-full transition-colors" style="color:#EA580C; border:1.5px solid #FDBA74; background:#FFFBF0;">编辑</RouterLink>
+              <RouterLink :to="{ name: 'workshop-entry-edit', params: { packId: pack.id, entryId: entry.id }, query: getPackNavigationQuery() }" class="text-xs font-bold px-3 py-1 rounded-full transition-colors" style="color:#EA580C; border:1.5px solid #FDBA74; background:#FFFBF0;">编辑</RouterLink>
               <button class="text-xs font-bold px-3 py-1 rounded-full transition-colors" style="color:#EF4444; border:1.5px solid #FECACA; background:#FEF2F2;" @click="handleDeleteEntry(entry.id)">删除</button>
             </div>
           </div>
@@ -1160,7 +1173,7 @@ watch(() => workshopStore.stNotification, (notif) => {
           酒馆正则 ({{ regexEntries.length }})
         </h2>
         <div class="flex items-center gap-2">
-          <RouterLink v-if="canAddEntry" :to="{ name: 'workshop-entry-new', params: { packId: pack.id }, query: { type: 'regex' } }" class="btn-primary text-sm">
+          <RouterLink v-if="canAddEntry" :to="{ name: 'workshop-entry-new', params: { packId: pack.id }, query: getPackNavigationQuery({ type: 'regex' }) }" class="btn-primary text-sm">
             添加正则
           </RouterLink>
         </div>
@@ -1173,7 +1186,7 @@ watch(() => workshopStore.stNotification, (notif) => {
           <div class="flex items-center justify-between gap-2">
             <h3 class="font-bold text-sm" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ entry.name }}</h3>
             <div v-if="canEditEntry(entry)" class="flex items-center gap-2 flex-shrink-0">
-              <RouterLink :to="{ name: 'workshop-entry-edit', params: { packId: pack.id, entryId: entry.id } }" class="text-xs font-bold px-3 py-1 rounded-full transition-colors" style="color:#EA580C; border:1.5px solid #FDBA74; background:#FFFBF0;">编辑</RouterLink>
+              <RouterLink :to="{ name: 'workshop-entry-edit', params: { packId: pack.id, entryId: entry.id }, query: getPackNavigationQuery() }" class="text-xs font-bold px-3 py-1 rounded-full transition-colors" style="color:#EA580C; border:1.5px solid #FDBA74; background:#FFFBF0;">编辑</RouterLink>
               <button class="text-xs font-bold px-3 py-1 rounded-full transition-colors" style="color:#EF4444; border:1.5px solid #FECACA; background:#FEF2F2;" @click="handleDeleteEntry(entry.id)">删除</button>
             </div>
           </div>
@@ -1213,7 +1226,7 @@ watch(() => workshopStore.stNotification, (notif) => {
           开场白 ({{ greetingEntries.length }})
         </h2>
         <div class="flex items-center gap-2">
-          <RouterLink v-if="canAddEntry" :to="{ name: 'workshop-entry-new', params: { packId: pack.id }, query: { type: 'greeting' } }" class="btn-primary text-sm">
+          <RouterLink v-if="canAddEntry" :to="{ name: 'workshop-entry-new', params: { packId: pack.id }, query: getPackNavigationQuery({ type: 'greeting' }) }" class="btn-primary text-sm">
             添加开场白
           </RouterLink>
         </div>
@@ -1226,7 +1239,7 @@ watch(() => workshopStore.stNotification, (notif) => {
           <div class="flex items-center justify-between gap-2">
             <h3 class="font-bold text-sm" style="font-family:'Fredoka',sans-serif; color:#431407;">{{ entry.name }}</h3>
             <div v-if="canEditEntry(entry)" class="flex items-center gap-2 flex-shrink-0">
-              <RouterLink :to="{ name: 'workshop-entry-edit', params: { packId: pack.id, entryId: entry.id } }" class="text-xs font-bold px-3 py-1 rounded-full transition-colors" style="color:#EA580C; border:1.5px solid #FDBA74; background:#FFFBF0;">编辑</RouterLink>
+              <RouterLink :to="{ name: 'workshop-entry-edit', params: { packId: pack.id, entryId: entry.id }, query: getPackNavigationQuery() }" class="text-xs font-bold px-3 py-1 rounded-full transition-colors" style="color:#EA580C; border:1.5px solid #FDBA74; background:#FFFBF0;">编辑</RouterLink>
               <button class="text-xs font-bold px-3 py-1 rounded-full transition-colors" style="color:#EF4444; border:1.5px solid #FECACA; background:#FEF2F2;" @click="handleDeleteEntry(entry.id)">删除</button>
             </div>
           </div>

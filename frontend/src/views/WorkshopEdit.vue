@@ -4,6 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useWorkshopStore } from '@/stores/workshop'
 import { useAuthStore } from '@/stores/auth'
 import ConfirmModal from '@/components/ConfirmModal.vue'
+import { buildWorkshopBackRoute } from '@/utils/workshopViewState'
 
 const router = useRouter()
 const route = useRoute()
@@ -22,6 +23,25 @@ const form = ref({
   worldbook: '',
 })
 
+function getWorkshopFallbackQuery(slug = null) {
+  const queryWorkshop = typeof route.query.workshop === 'string' ? route.query.workshop : ''
+  const targetWorkshop = slug || queryWorkshop
+  return targetWorkshop ? { workshop: targetWorkshop } : {}
+}
+
+function shouldReturnToWorkshop() {
+  return route.query.from === 'workshop' || typeof route.query.workshop === 'string'
+}
+
+function goBackToWorkshop(slug = null, replace = false) {
+  const targetRoute = buildWorkshopBackRoute(getWorkshopFallbackQuery(slug))
+  if (replace) {
+    router.replace(targetRoute)
+    return
+  }
+  router.push(targetRoute)
+}
+
 // ── 权限门控 & 数据加载 ──────────────────────────────────────────────
 onMounted(async () => {
   // 等待 auth 加载完成
@@ -31,6 +51,10 @@ onMounted(async () => {
     })
   }
   if (!authStore.isLoggedIn) {
+    if (shouldReturnToWorkshop()) {
+      goBackToWorkshop(null, true)
+      return
+    }
     router.replace({ name: 'workshop' })
     return
   }
@@ -48,6 +72,10 @@ onMounted(async () => {
   }
   // 仅作者或管理员可编辑
   if (w.author_id !== authStore.user?.id && !authStore.isCreator) {
+    if (shouldReturnToWorkshop()) {
+      goBackToWorkshop(w.slug, true)
+      return
+    }
     router.replace({ name: 'workshop' })
     return
   }
@@ -76,11 +104,19 @@ async function handleSubmit() {
 
   saving.value = false
   if (result) {
+    if (shouldReturnToWorkshop()) {
+      goBackToWorkshop(result.slug)
+      return
+    }
     router.push({ path: '/workshop', query: { workshop: result.slug } })
   }
 }
 
 function goBack() {
+  if (shouldReturnToWorkshop()) {
+    goBackToWorkshop()
+    return
+  }
   router.back()
 }
 

@@ -5,7 +5,7 @@ function getWorkshopViewStorage() {
   return window.sessionStorage
 }
 
-function sanitizeWorkshopQuery(query = {}) {
+export function sanitizeWorkshopQuery(query = {}) {
   const nextQuery = {}
 
   if (query.workshop) {
@@ -52,16 +52,14 @@ export function writeWorkshopViewState(state = {}) {
 
 export function buildWorkshopBackRoute(fallbackQuery = {}) {
   const savedState = readWorkshopViewState()
-
-  if (savedState && savedState.routeQuery) {
-    return {
-      name: 'workshop',
-      query: sanitizeWorkshopQuery(savedState.routeQuery),
-    }
-  }
+  const savedQuery = sanitizeWorkshopQuery(savedState?.routeQuery || {})
+  const explicitQuery = sanitizeWorkshopQuery(fallbackQuery)
 
   return {
     name: 'workshop',
-    query: sanitizeWorkshopQuery(fallbackQuery),
+    query: {
+      ...savedQuery,
+      ...explicitQuery,
+    },
   }
 }
