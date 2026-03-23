@@ -1,10 +1,11 @@
 <script setup>
 import { onMounted, computed, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import ConfirmModal from '@/components/ConfirmModal.vue'
+import PackSubscribeModal from '@/components/PackSubscribeModal.vue'
+import PackUpdateModal from '@/components/PackUpdateModal.vue'
 import { useWorkshopStore } from '@/stores/workshop'
 import { useAuthStore } from '@/stores/auth'
-import ConfirmModal from '@/components/ConfirmModal.vue'
-import PackUpdateModal from '@/components/PackUpdateModal.vue'
 import { buildWorkshopBackRoute, sanitizeWorkshopQuery } from '@/utils/workshopViewState'
 
 const router = useRouter()
@@ -624,6 +625,8 @@ const canUseSubscription = computed(() => {
   return false
 })
 
+const subscribeUnavailableMessage = '请在 SillyTavern 酒馆内打开创意工坊后再订阅模组'
+
 // Phase 2: 更新检测
 const packChangesData = computed(() => {
   if (!pack.value) return null
@@ -672,6 +675,10 @@ function getPackNavigationQuery(extraQuery = {}) {
     }),
     ...extraQuery,
   }
+}
+
+function shouldForcePackRefresh() {
+  return route.query.refresh === '1'
 }
 
 async function initializePackDetail(result) {
@@ -724,9 +731,19 @@ function goBackToWorkshop() {
 
 onMounted(async () => {
   await workshopStore.initStExtensionMode()
-  const cachedPack = workshopStore.currentPack?.id === packId.value ? workshopStore.currentPack : null
+  const cachedPack = !shouldForcePackRefresh() && workshopStore.currentPack?.id === packId.value
+    ? workshopStore.currentPack
+    : null
   const result = cachedPack || await workshopStore.fetchPack(packId.value)
   await initializePackDetail(result)
+
+  if (shouldForcePackRefresh()) {
+    router.replace({
+      name: 'workshop-pack-detail',
+      params: { packId: packId.value },
+      query: getPackNavigationQuery(),
+    })
+  }
 })
 
 async function handleLike() {
@@ -766,12 +783,17 @@ const hasRiskyContent = computed(() => {
 })
 
 async function handleSubscribe() {
+  if (!canUseSubscription.value) {
+    workshopStore.stNotification = {
+      type: 'error',
+      message: subscribeUnavailableMessage,
+    }
+    return
+  }
   if (!authStore.isLoggedIn) { authStore.loginWithDiscord(); return }
   
   // 取消订阅：无需确认，直接执行
   if (isSubscribed.value) {
-    console.log("调用我handleSubscribe");
-    
     await workshopStore.toggleSubscribe(pack.value, null, 'unsubscribe')
     return
   }
@@ -1023,11 +1045,16 @@ watch(() => workshopStore.stNotification, (notif) => {
           <button
             class="btn-action-sub flex items-center gap-1.5 px-4 py-2 rounded-full font-bold text-sm transition-all duration-150"
             :style="isSubscribed
-              ? 'background:#F0FDF4; color:#16A34A; border:2.5px solid #22C55E; box-shadow:3px 3px 0 #22C55E;'
-              : 'background:#FFFBF0; color:#A8A29E; border:2.5px solid #E7E5E4; box-shadow:3px 3px 0 #E7E5E4;'"
+              ? (!canUseSubscription
+                ? 'background:#F5F5F4; color:#A8A29E; border:2.5px solid #D6D3D1; box-shadow:3px 3px 0 #D6D3D1; cursor:not-allowed;'
+                : 'background:#F0FDF4; color:#16A34A; border:2.5px solid #22C55E; box-shadow:3px 3px 0 #22C55E;')
+              : (!canUseSubscription
+                ? 'background:#F5F5F4; color:#A8A29E; border:2.5px solid #D6D3D1; box-shadow:3px 3px 0 #D6D3D1; cursor:not-allowed;'
+                : 'background:#FFFBF0; color:#A8A29E; border:2.5px solid #E7E5E4; box-shadow:3px 3px 0 #E7E5E4;')"
             @click="handleSubscribe"
-            :disabled="!canUseSubscription || workshopStore.stLoading"
-            :title="!canUseSubscription ? '需要在SillyTavern中使用订阅功能' : ''"
+            :disabled="workshopStore.stLoading"
+            :title="!canUseSubscription ? subscribeUnavailableMessage : ''"
+            :aria-disabled="!canUseSubscription"
           >
             <svg class="sub-icon w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 22c1.1 0 2-.9 2-2H10c0 1.1.9 2 2 2z"/>
@@ -1043,6 +1070,14 @@ watch(() => workshopStore.stNotification, (notif) => {
               </span>
             </template>
           </button>
+
+          <div
+            v-if="!canUseSubscription"
+            class="px-3 py-2 rounded-xl text-xs font-bold"
+            style="background:#FFF7ED; color:#C2410C; border:2px dashed #FDBA74;"
+          >
+            请在酒馆里打开创意工坊后订阅
+          </div>
 
           <!-- 重新同步按钮（仅在需要时显示） -->
           <button
@@ -1315,118 +1350,20 @@ watch(() => workshopStore.stNotification, (notif) => {
   </div>
 
   <!-- 订阅/重新同步确认弹窗 -->
-  <ConfirmModal
+  <PackSubscribeModal
     v-if="showSubConfirm"
-    :title="isResyncMode ? '重新同步到世界书' : '订阅模组'"
-    :confirm-text="isResyncMode ? '确认同步' : '确认订阅'"
-    cancel-text="取消"
-    :confirm-disabled="hasRiskyContent && !isCharacterConfirmed"
+    :pack-title="pack?.title"
+    :entries="pack?.entries || []"
+    v-model:selected-entry-ids="selectedEntryIds"
+    v-model:target-worldbook-name="targetWorldbookName"
+    v-model:character-confirmed="isCharacterConfirmed"
+    :show-worldbook-selector="workshopStore.isFromStExtension() && workshopStore.stConnected"
+    :default-worldbook-name="workshopStore.worldbookName"
+    :worldbook-list="workshopStore.worldbookList"
+    :resync-mode="isResyncMode"
     @confirm="isResyncMode ? confirmResync() : confirmSubscribe()"
     @cancel="showSubConfirm = false; isResyncMode = false"
-  >
-    <div class="flex flex-col gap-4">
-      <p v-if="isResyncMode" class="text-sm" style="color:#78716C;">
-        将重新同步模组「<strong>{{ pack?.title }}</strong>」到 SillyTavern 世界书。<br>
-        <span class="text-xs text-orange-600">注意：这不会更改服务器端的订阅状态。</span>
-      </p>
-      <p v-else v-html="`确定要订阅 <strong>${pack?.title}</strong> 吗？`"></p>
-      
-      <!-- 风险提示与确认 -->
-      <div v-if="hasRiskyContent" class="flex flex-col gap-2 p-3 rounded-xl bg-orange-50 border border-orange-200">
-        <div class="flex items-start gap-2">
-          <span class="text-lg leading-none">⚠️</span>
-          <div class="text-xs text-orange-800">
-            <p class="font-bold mb-1">注意：此订阅包含正则脚本或开场白。</p>
-            <p>这些内容会直接关联到当前选中的角色卡。如果当前未进入角色卡，或进入了错误的角色卡，可能会导致数据错乱。</p>
-          </div>
-        </div>
-        <label class="flex items-center gap-2 mt-2 pt-2 border-t border-orange-200 cursor-pointer select-none">
-          <input type="checkbox" v-model="isCharacterConfirmed" class="w-4 h-4 text-orange-600 rounded focus:ring-orange-500 accent-orange-600" />
-          <span class="text-xs font-bold text-orange-700">我确认 ST 当前已进入正确的角色卡</span>
-        </label>
-      </div>
-      
-      <div v-if="workshopStore.isFromStExtension() && workshopStore.stConnected && !hasRiskyContent" class="flex flex-col gap-1.5 p-3 rounded-xl bg-[#F0FDF4] border border-[#DCFCE7]">
-        <label class="text-[10px] font-bold text-[#16A34A] uppercase tracking-wider">选择目标世界书</label>
-        <select 
-          v-model="targetWorldbookName"
-          class="input text-sm py-1.5"
-          style="border-color:#22C55E; background: white;"
-        >
-          <option v-if="workshopStore.worldbookName" :value="workshopStore.worldbookName">
-            {{ workshopStore.worldbookName }} (工坊作者默认)
-          </option>
-          <option 
-            v-for="wb in workshopStore.worldbookList.filter(w => w !== workshopStore.worldbookName)" 
-            :key="wb" 
-            :value="wb"
-          >
-            {{ wb }}
-          </option>
-        </select>
-        <p class="text-[10px] text-[#16A34A] opacity-80 mt-1">
-          * 条目将插入到所选世界书中。默认为工坊作者推荐的世界书。
-        </p>
-      </div>
-
-      <!-- 条目选择列表 -->
-      <div v-if="pack?.entries && pack.entries.length > 0" class="flex flex-col gap-3 p-3 rounded-xl bg-[#FFFBF0] border border-[#FDBA74] max-h-[50vh] overflow-y-auto custom-scrollbar">
-        
-        <div class="flex items-center justify-between pb-2 border-b border-[#FED7AA]">
-           <span class="text-xs font-bold text-[#78350F]">选择要插入的条目</span>
-           <button 
-            @click.stop="selectedEntryIds = selectedEntryIds.length === pack.entries.length ? [] : pack.entries.map(e => e.id)"
-            class="text-[10px] font-bold px-2 py-0.5 rounded"
-            style="background:#FFF7ED; color:#EA580C; border:1px solid #FDBA74;"
-          >
-            {{ selectedEntryIds.length === pack.entries.length ? '取消全选' : '全选所有' }}
-          </button>
-        </div>
-
-        <template v-if="worldbookEntries.length > 0">
-           <label class="text-[10px] font-bold text-[#92400E] uppercase tracking-wider mb-1">世界书条目 ({{ worldbookEntries.length }})</label>
-           <div class="flex flex-col gap-1 mb-2">
-             <label v-for="entry in worldbookEntries" :key="entry.id" class="flex items-start gap-2 p-2 rounded-lg hover:bg-[#FFF7ED] transition-colors cursor-pointer" :style="selectedEntryIds.includes(entry.id) ? 'background:#FFF7ED;' : ''">
-                <input type="checkbox" :value="entry.id" v-model="selectedEntryIds" class="mt-0.5 flex-shrink-0" style="accent-color:#F97316;" />
-                <div class="flex-1 min-w-0">
-                    <div class="text-xs font-bold truncate text-[#431407]">{{ entry.name }}</div>
-                    <div v-if="entry.content" class="text-[10px] line-clamp-1 mt-0.5 text-[#78716C]">{{ entry.content }}</div>
-                </div>
-             </label>
-           </div>
-        </template>
-
-        <template v-if="regexEntries.length > 0">
-           <label class="text-[10px] font-bold text-[#92400E] uppercase tracking-wider mb-1 mt-1">酒馆正则 ({{ regexEntries.length }})</label>
-           <div class="flex flex-col gap-1 mb-2">
-             <label v-for="entry in regexEntries" :key="entry.id" class="flex items-start gap-2 p-2 rounded-lg hover:bg-[#FFF7ED] transition-colors cursor-pointer" :style="selectedEntryIds.includes(entry.id) ? 'background:#FFF7ED;' : ''">
-                <input type="checkbox" :value="entry.id" v-model="selectedEntryIds" class="mt-0.5 flex-shrink-0" style="accent-color:#F97316;" />
-                <div class="flex-1 min-w-0">
-                    <div class="text-xs font-bold truncate text-[#431407]">{{ entry.name }}</div>
-                </div>
-             </label>
-           </div>
-        </template>
-
-        <template v-if="greetingEntries.length > 0">
-           <label class="text-[10px] font-bold text-[#92400E] uppercase tracking-wider mb-1 mt-1">开场白 ({{ greetingEntries.length }})</label>
-           <div class="flex flex-col gap-1 mb-2">
-             <label v-for="entry in greetingEntries" :key="entry.id" class="flex items-start gap-2 p-2 rounded-lg hover:bg-[#FFF7ED] transition-colors cursor-pointer" :style="selectedEntryIds.includes(entry.id) ? 'background:#FFF7ED;' : ''">
-                <input type="checkbox" :value="entry.id" v-model="selectedEntryIds" class="mt-0.5 flex-shrink-0" style="accent-color:#F97316;" />
-                <div class="flex-1 min-w-0">
-                    <div class="text-xs font-bold truncate text-[#431407]">{{ entry.name }}</div>
-                    <div v-if="entry.content" class="text-[10px] line-clamp-1 mt-0.5 text-[#78716C]">{{ entry.content }}</div>
-                </div>
-             </label>
-           </div>
-        </template>
-
-        <p class="text-[10px] text-[#78350F] opacity-80 mt-2 border-t border-[#FED7AA] pt-2">
-          已选择 {{ selectedEntryIds.length }} / {{ pack.entries.length }} 条
-        </p>
-      </div>
-    </div>
-  </ConfirmModal>
+  />
 
   <!-- 导出确认弹窗 -->
   <ConfirmModal

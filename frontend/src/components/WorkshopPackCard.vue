@@ -1,9 +1,10 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import PackSubscribeModal from '@/components/PackSubscribeModal.vue'
+import PackUpdateModal from '@/components/PackUpdateModal.vue'
 import { useWorkshopStore } from '@/stores/workshop'
 import { useAuthStore } from '@/stores/auth'
-import ConfirmModal from '@/components/ConfirmModal.vue'
 import { sanitizeWorkshopQuery } from '@/utils/workshopViewState'
 
 const props = defineProps({
@@ -31,17 +32,33 @@ const entryCountLabel = computed(() => {
 })
 
 const isSubscribedLocally = computed(() => {
-  if (workshopStore.isFromStExtension() && workshopStore.stConnected) {
-    return !!workshopStore.subscribedPacksInST[props.pack.id]
-  }
-  if (workshopStore.isSillyTavernEnv()) {
-    return !!workshopStore.subscribedPacksInST[props.pack.id]
-  }
-  return !!props.pack.is_subscribed
+  return !!props.pack.is_subscribed || !!workshopStore.subscribedPacksInST[props.pack.id]
+})
+
+const canUseSubscription = computed(() => {
+  if (workshopStore.isSillyTavernEnv()) return true
+  if (workshopStore.isFromStExtension() && workshopStore.stConnected) return true
+  return false
+})
+
+const subscribeUnavailableMessage = '请在 SillyTavern 酒馆内打开创意工坊后再订阅模组'
+
+const packChangesData = computed(() => workshopStore.packChanges[props.pack.id] || null)
+const hasUpdates = computed(() => !!props.pack.is_subscribed && !!packChangesData.value?.has_changes)
+const updateSummary = computed(() => packChangesData.value?.summary || { new: 0, modified: 0, deleted: 0 })
+const updateBadgeText = computed(() => {
+  if (!hasUpdates.value) return ''
+  const parts = []
+  if (updateSummary.value.new > 0) parts.push(`${updateSummary.value.new} 新增`)
+  if (updateSummary.value.modified > 0) parts.push(`${updateSummary.value.modified} 修改`)
+  if (updateSummary.value.deleted > 0) parts.push(`${updateSummary.value.deleted} 删除`)
+  return parts.join(', ')
 })
 
 // 订阅确认弹窗状态
 const showSubConfirm = ref(false)
+const showUpdateModal = ref(false)
+const syncingUpdates = ref(false)
 const targetWorldbookName = ref('')
 // 条目选择（所有条目 ID 的列表，默认全部选中）
 const selectedEntryIds = ref([])
@@ -67,6 +84,13 @@ async function handleLike(e) {
 
 async function handleSubscribe(e) {
   e.stopPropagation()
+  if (!canUseSubscription.value) {
+    workshopStore.stNotification = {
+      type: 'error',
+      message: subscribeUnavailableMessage,
+    }
+    return
+  }
   if (!authStore.isLoggedIn) {
     authStore.loginWithDiscord()
     return
@@ -120,6 +144,22 @@ async function confirmSubscribe() {
 
 function cancelSubscribe() {
   showSubConfirm.value = false
+}
+
+function openUpdateModal(e) {
+  e.stopPropagation()
+  showUpdateModal.value = true
+}
+
+async function handleSyncUpdatesSelective(selectedIds) {
+  if (syncingUpdates.value) return
+  syncingUpdates.value = true
+  try {
+    await workshopStore.syncPackUpdatesSelective(props.pack.id, selectedIds)
+    showUpdateModal.value = false
+  } finally {
+    syncingUpdates.value = false
+  }
 }
 
 function goToDetail() {
@@ -190,6 +230,21 @@ function goToDetail() {
 
       <!-- 点赞 + 订阅按钮 -->
       <div class="flex items-center gap-2">
+        <button
+          v-if="hasUpdates"
+          class="flex items-center gap-1 px-2.5 py-1 rounded-full transition-all duration-150 text-xs font-bold"
+          style="background:#FEF3C7; color:#D97706; border:2px solid #F59E0B; box-shadow:2px 2px 0 #F59E0B;"
+          :title="`模组有更新：${updateBadgeText}`"
+          @click="openUpdateModal"
+        >
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="16" x2="12" y2="12"/>
+            <line x1="12" y1="8" x2="12.01" y2="8"/>
+          </svg>
+          更新
+        </button>
+
         <!-- 点赞 -->
         <button
           class="btn-action-like flex items-center gap-1 px-2.5 py-1 rounded-full transition-all duration-150 text-xs font-bold"
@@ -209,10 +264,15 @@ function goToDetail() {
         <button
           class="btn-action-sub flex items-center gap-1 px-2.5 py-1 rounded-full transition-all duration-150 text-xs font-bold"
           :style="isSubscribedLocally
-            ? 'background:#F0FDF4; color:#16A34A; border:2px solid #22C55E; box-shadow:2px 2px 0 #22C55E;'
-            : 'background:#FFFBF0; color:#A8A29E; border:2px solid #E7E5E4; box-shadow:2px 2px 0 #E7E5E4;'"
+            ? (!canUseSubscription
+              ? 'background:#F5F5F4; color:#A8A29E; border:2px solid #D6D3D1; box-shadow:2px 2px 0 #D6D3D1; cursor:not-allowed;'
+              : 'background:#F0FDF4; color:#16A34A; border:2px solid #22C55E; box-shadow:2px 2px 0 #22C55E;')
+            : (!canUseSubscription
+              ? 'background:#F5F5F4; color:#A8A29E; border:2px solid #D6D3D1; box-shadow:2px 2px 0 #D6D3D1; cursor:not-allowed;'
+              : 'background:#FFFBF0; color:#A8A29E; border:2px solid #E7E5E4; box-shadow:2px 2px 0 #E7E5E4;')"
           @click="handleSubscribe"
-          :title="isSubscribedLocally ? '取消订阅' : '订阅'"
+          :title="canUseSubscription ? (isSubscribedLocally ? '取消订阅' : '订阅') : subscribeUnavailableMessage"
+          :aria-disabled="!canUseSubscription"
         >
           <svg class="sub-icon w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 22c1.1 0 2-.9 2-2H10c0 1.1.9 2 2 2z"/>
@@ -225,95 +285,25 @@ function goToDetail() {
   </div>
 
   <!-- 订阅确认弹窗 -->
-  <ConfirmModal
+  <PackSubscribeModal
     v-if="showSubConfirm"
-    title="订阅模组"
-    confirm-text="确认订阅"
-    cancel-text="取消"
-    :confirm-disabled="hasRiskyContent && !isCharacterConfirmed"
+    :pack-title="pack.title"
+    :entries="modalEntries"
+    v-model:selected-entry-ids="selectedEntryIds"
+    v-model:target-worldbook-name="targetWorldbookName"
+    v-model:character-confirmed="isCharacterConfirmed"
+    :show-worldbook-selector="workshopStore.isFromStExtension() && workshopStore.stConnected"
+    :default-worldbook-name="workshopStore.worldbookName"
+    :worldbook-list="workshopStore.worldbookList"
     @confirm="confirmSubscribe"
     @cancel="cancelSubscribe"
-  >
-    <div class="flex flex-col gap-4">
-      <p v-html="`确定要订阅「<strong>${pack.title}</strong>」吗？`"></p>
+  />
 
-      <!-- 风险提示与确认 -->
-      <div v-if="hasRiskyContent" class="flex flex-col gap-2 p-3 rounded-xl bg-orange-50 border border-orange-200">
-        <div class="flex items-start gap-2">
-          <span class="text-lg leading-none">⚠️</span>
-          <div class="text-xs text-orange-800">
-            <p class="font-bold mb-1">注意：此订阅包含正则脚本或开场白。</p>
-            <p>这些内容会直接关联到当前选中的角色卡。如果当前未进入角色卡，或进入了错误的角色卡，可能会导致数据错乱。</p>
-          </div>
-        </div>
-        <label class="flex items-center gap-2 mt-2 pt-2 border-t border-orange-200 cursor-pointer select-none">
-          <input type="checkbox" v-model="isCharacterConfirmed" class="w-4 h-4 text-orange-600 rounded focus:ring-orange-500 accent-orange-600" />
-          <span class="text-xs font-bold text-orange-700">我确认 ST 当前已进入正确的角色卡</span>
-        </label>
-      </div>
-      
-      <div v-if="workshopStore.isFromStExtension() && workshopStore.stConnected && !hasRiskyContent" class="flex flex-col gap-1.5 p-3 rounded-xl bg-[#F0FDF4] border border-[#DCFCE7]">
-        <label class="text-[10px] font-bold text-[#16A34A] uppercase tracking-wider">选择目标世界书</label>
-        <select 
-          v-model="targetWorldbookName"
-          class="input text-sm py-1.5"
-          style="border-color:#22C55E; background: white;"
-          @click.stop
-        >
-          <option v-if="workshopStore.worldbookName" :value="workshopStore.worldbookName">
-            {{ workshopStore.worldbookName }} (工坊作者默认)
-          </option>
-          <option 
-            v-for="wb in workshopStore.worldbookList.filter(w => w !== workshopStore.worldbookName)" 
-            :key="wb" 
-            :value="wb"
-          >
-            {{ wb }}
-          </option>
-        </select>
-        <p class="text-[10px] text-[#16A34A] opacity-80 mt-1">
-          * 条目将插入到所选世界书中。默认为工坊作者推荐的世界书。
-        </p>
-      </div>
-
-      <!-- 条目选择列表 -->
-      <div v-if="modalEntries && modalEntries.length > 0" class="flex flex-col gap-2 p-3 rounded-xl bg-[#FFFBF0] border border-[#FDBA74]">
-        <div class="flex items-center justify-between">
-          <label class="text-[10px] font-bold text-[#78350F] uppercase tracking-wider">选择要插入的条目</label>
-          <button 
-            @click.stop="selectedEntryIds = selectedEntryIds.length === modalEntries.length ? [] : modalEntries.map(e => e.id)"
-            class="text-[10px] font-bold px-2 py-0.5 rounded"
-            style="background:#FFF7ED; color:#EA580C; border:1px solid #FDBA74;"
-          >
-            {{ selectedEntryIds.length === modalEntries.length ? '取消全选' : '全选' }}
-          </button>
-        </div>
-        <div class="max-h-[200px] overflow-y-auto custom-scrollbar flex flex-col gap-1">
-          <label 
-            v-for="entry in modalEntries" 
-            :key="entry.id"
-            class="flex items-start gap-2 p-2 rounded-lg hover:bg-[#FFF7ED] transition-colors cursor-pointer"
-            style="border:1px solid transparent;"
-            :style="selectedEntryIds.includes(entry.id) ? 'background:#FFF7ED; border-color:#FDBA74;' : ''"
-            @click.stop
-          >
-            <input 
-              type="checkbox"
-              :value="entry.id"
-              v-model="selectedEntryIds"
-              class="mt-0.5 flex-shrink-0"
-              style="accent-color:#F97316;"
-            />
-            <div class="flex-1 min-w-0">
-              <div class="text-xs font-bold truncate" style="color:#431407;">{{ entry.name }}</div>
-              <div v-if="entry.content" class="text-[10px] whitespace-pre-line mt-0.5" style="color:#78716C; white-space:pre-line;">{{ entry.content }}</div>
-            </div>
-          </label>
-        </div>
-        <p class="text-[10px] text-[#78350F] opacity-80">
-          已选择 {{ selectedEntryIds.length }} / {{ modalEntries.length }} 条
-        </p>
-      </div>
-    </div>
-  </ConfirmModal>
+  <PackUpdateModal
+    v-if="showUpdateModal"
+    :changes-data="packChangesData"
+    :syncing="syncingUpdates"
+    @close="showUpdateModal = false"
+    @sync-selective="handleSyncUpdatesSelective"
+  />
 </template>
