@@ -340,6 +340,8 @@ async function initializeWorkshopView() {
 
   if (canReuseLoadedView(targetPage)) {
     viewStateReady.value = true
+    await workshopStore.fetchMySubscriptions()
+    await workshopStore.fetchAllSubscribedPackChanges()
     await restoreScrollPosition()
     return
   }
@@ -347,12 +349,16 @@ async function initializeWorkshopView() {
   await load(targetPage)
   viewStateReady.value = true
   await workshopStore.scanSubscribedPacks()
+  await workshopStore.fetchMySubscriptions()
+  await workshopStore.fetchAllSubscribedPackChanges()
 }
 
 async function refreshWorkshopView() {
   await ensureWorkshopContext(true)
   await load(workshopStore.pagination.page || 1)
   await workshopStore.scanSubscribedPacks()
+  await workshopStore.fetchMySubscriptions()
+  await workshopStore.fetchAllSubscribedPackChanges()
 
   if (workshopStore.stConnected && workshopSlug.value) {
     await autoMapWorldbook()

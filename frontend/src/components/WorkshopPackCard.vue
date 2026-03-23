@@ -4,6 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useWorkshopStore } from '@/stores/workshop'
 import { useAuthStore } from '@/stores/auth'
 import ConfirmModal from '@/components/ConfirmModal.vue'
+import PackUpdateModal from '@/components/PackUpdateModal.vue'
 import { sanitizeWorkshopQuery } from '@/utils/workshopViewState'
 
 const props = defineProps({
@@ -31,17 +32,33 @@ const entryCountLabel = computed(() => {
 })
 
 const isSubscribedLocally = computed(() => {
-  if (workshopStore.isFromStExtension() && workshopStore.stConnected) {
-    return !!workshopStore.subscribedPacksInST[props.pack.id]
-  }
-  if (workshopStore.isSillyTavernEnv()) {
-    return !!workshopStore.subscribedPacksInST[props.pack.id]
-  }
-  return !!props.pack.is_subscribed
+  return !!props.pack.is_subscribed || !!workshopStore.subscribedPacksInST[props.pack.id]
+})
+
+const canUseSubscription = computed(() => {
+  if (workshopStore.isSillyTavernEnv()) return true
+  if (workshopStore.isFromStExtension() && workshopStore.stConnected) return true
+  return false
+})
+
+const subscribeUnavailableMessage = '请在 SillyTavern 酒馆内打开创意工坊后再订阅模组'
+
+const packChangesData = computed(() => workshopStore.packChanges[props.pack.id] || null)
+const hasUpdates = computed(() => !!props.pack.is_subscribed && !!packChangesData.value?.has_changes)
+const updateSummary = computed(() => packChangesData.value?.summary || { new: 0, modified: 0, deleted: 0 })
+const updateBadgeText = computed(() => {
+  if (!hasUpdates.value) return ''
+  const parts = []
+  if (updateSummary.value.new > 0) parts.push(`${updateSummary.value.new} 新增`)
+  if (updateSummary.value.modified > 0) parts.push(`${updateSummary.value.modified} 修改`)
+  if (updateSummary.value.deleted > 0) parts.push(`${updateSummary.value.deleted} 删除`)
+  return parts.join(', ')
 })
 
 // 订阅确认弹窗状态
 const showSubConfirm = ref(false)
+const showUpdateModal = ref(false)
+const syncingUpdates = ref(false)
 const targetWorldbookName = ref('')
 // 条目选择（所有条目 ID 的列表，默认全部选中）
 const selectedEntryIds = ref([])
@@ -67,6 +84,13 @@ async function handleLike(e) {
 
 async function handleSubscribe(e) {
   e.stopPropagation()
+  if (!canUseSubscription.value) {
+    workshopStore.stNotification = {
+      type: 'error',
+      message: subscribeUnavailableMessage,
+    }
+    return
+  }
   if (!authStore.isLoggedIn) {
     authStore.loginWithDiscord()
     return
@@ -120,6 +144,22 @@ async function confirmSubscribe() {
 
 function cancelSubscribe() {
   showSubConfirm.value = false
+}
+
+function openUpdateModal(e) {
+  e.stopPropagation()
+  showUpdateModal.value = true
+}
+
+async function handleSyncUpdatesSelective(selectedIds) {
+  if (syncingUpdates.value) return
+  syncingUpdates.value = true
+  try {
+    await workshopStore.syncPackUpdatesSelective(props.pack.id, selectedIds)
+    showUpdateModal.value = false
+  } finally {
+    syncingUpdates.value = false
+  }
 }
 
 function goToDetail() {
@@ -190,6 +230,21 @@ function goToDetail() {
 
       <!-- 点赞 + 订阅按钮 -->
       <div class="flex items-center gap-2">
+        <button
+          v-if="hasUpdates"
+          class="flex items-center gap-1 px-2.5 py-1 rounded-full transition-all duration-150 text-xs font-bold"
+          style="background:#FEF3C7; color:#D97706; border:2px solid #F59E0B; box-shadow:2px 2px 0 #F59E0B;"
+          :title="`模组有更新：${updateBadgeText}`"
+          @click="openUpdateModal"
+        >
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="16" x2="12" y2="12"/>
+            <line x1="12" y1="8" x2="12.01" y2="8"/>
+          </svg>
+          更新
+        </button>
+
         <!-- 点赞 -->
         <button
           class="btn-action-like flex items-center gap-1 px-2.5 py-1 rounded-full transition-all duration-150 text-xs font-bold"
@@ -209,10 +264,15 @@ function goToDetail() {
         <button
           class="btn-action-sub flex items-center gap-1 px-2.5 py-1 rounded-full transition-all duration-150 text-xs font-bold"
           :style="isSubscribedLocally
-            ? 'background:#F0FDF4; color:#16A34A; border:2px solid #22C55E; box-shadow:2px 2px 0 #22C55E;'
-            : 'background:#FFFBF0; color:#A8A29E; border:2px solid #E7E5E4; box-shadow:2px 2px 0 #E7E5E4;'"
+            ? (!canUseSubscription
+              ? 'background:#F5F5F4; color:#A8A29E; border:2px solid #D6D3D1; box-shadow:2px 2px 0 #D6D3D1; cursor:not-allowed;'
+              : 'background:#F0FDF4; color:#16A34A; border:2px solid #22C55E; box-shadow:2px 2px 0 #22C55E;')
+            : (!canUseSubscription
+              ? 'background:#F5F5F4; color:#A8A29E; border:2px solid #D6D3D1; box-shadow:2px 2px 0 #D6D3D1; cursor:not-allowed;'
+              : 'background:#FFFBF0; color:#A8A29E; border:2px solid #E7E5E4; box-shadow:2px 2px 0 #E7E5E4;')"
           @click="handleSubscribe"
-          :title="isSubscribedLocally ? '取消订阅' : '订阅'"
+          :title="canUseSubscription ? (isSubscribedLocally ? '取消订阅' : '订阅') : subscribeUnavailableMessage"
+          :aria-disabled="!canUseSubscription"
         >
           <svg class="sub-icon w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 22c1.1 0 2-.9 2-2H10c0 1.1.9 2 2 2z"/>
@@ -316,4 +376,12 @@ function goToDetail() {
       </div>
     </div>
   </ConfirmModal>
+
+  <PackUpdateModal
+    v-if="showUpdateModal"
+    :changes-data="packChangesData"
+    :syncing="syncingUpdates"
+    @close="showUpdateModal = false"
+    @sync-selective="handleSyncUpdatesSelective"
+  />
 </template>

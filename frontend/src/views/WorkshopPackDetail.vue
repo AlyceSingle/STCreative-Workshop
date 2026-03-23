@@ -624,6 +624,8 @@ const canUseSubscription = computed(() => {
   return false
 })
 
+const subscribeUnavailableMessage = '请在 SillyTavern 酒馆内打开创意工坊后再订阅模组'
+
 // Phase 2: 更新检测
 const packChangesData = computed(() => {
   if (!pack.value) return null
@@ -672,6 +674,10 @@ function getPackNavigationQuery(extraQuery = {}) {
     }),
     ...extraQuery,
   }
+}
+
+function shouldForcePackRefresh() {
+  return route.query.refresh === '1'
 }
 
 async function initializePackDetail(result) {
@@ -724,9 +730,19 @@ function goBackToWorkshop() {
 
 onMounted(async () => {
   await workshopStore.initStExtensionMode()
-  const cachedPack = workshopStore.currentPack?.id === packId.value ? workshopStore.currentPack : null
+  const cachedPack = !shouldForcePackRefresh() && workshopStore.currentPack?.id === packId.value
+    ? workshopStore.currentPack
+    : null
   const result = cachedPack || await workshopStore.fetchPack(packId.value)
   await initializePackDetail(result)
+
+  if (shouldForcePackRefresh()) {
+    router.replace({
+      name: 'workshop-pack-detail',
+      params: { packId: packId.value },
+      query: getPackNavigationQuery(),
+    })
+  }
 })
 
 async function handleLike() {
@@ -766,6 +782,13 @@ const hasRiskyContent = computed(() => {
 })
 
 async function handleSubscribe() {
+  if (!canUseSubscription.value) {
+    workshopStore.stNotification = {
+      type: 'error',
+      message: subscribeUnavailableMessage,
+    }
+    return
+  }
   if (!authStore.isLoggedIn) { authStore.loginWithDiscord(); return }
   
   // 取消订阅：无需确认，直接执行
@@ -1023,11 +1046,16 @@ watch(() => workshopStore.stNotification, (notif) => {
           <button
             class="btn-action-sub flex items-center gap-1.5 px-4 py-2 rounded-full font-bold text-sm transition-all duration-150"
             :style="isSubscribed
-              ? 'background:#F0FDF4; color:#16A34A; border:2.5px solid #22C55E; box-shadow:3px 3px 0 #22C55E;'
-              : 'background:#FFFBF0; color:#A8A29E; border:2.5px solid #E7E5E4; box-shadow:3px 3px 0 #E7E5E4;'"
+              ? (!canUseSubscription
+                ? 'background:#F5F5F4; color:#A8A29E; border:2.5px solid #D6D3D1; box-shadow:3px 3px 0 #D6D3D1; cursor:not-allowed;'
+                : 'background:#F0FDF4; color:#16A34A; border:2.5px solid #22C55E; box-shadow:3px 3px 0 #22C55E;')
+              : (!canUseSubscription
+                ? 'background:#F5F5F4; color:#A8A29E; border:2.5px solid #D6D3D1; box-shadow:3px 3px 0 #D6D3D1; cursor:not-allowed;'
+                : 'background:#FFFBF0; color:#A8A29E; border:2.5px solid #E7E5E4; box-shadow:3px 3px 0 #E7E5E4;')"
             @click="handleSubscribe"
-            :disabled="!canUseSubscription || workshopStore.stLoading"
-            :title="!canUseSubscription ? '需要在SillyTavern中使用订阅功能' : ''"
+            :disabled="workshopStore.stLoading"
+            :title="!canUseSubscription ? subscribeUnavailableMessage : ''"
+            :aria-disabled="!canUseSubscription"
           >
             <svg class="sub-icon w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 22c1.1 0 2-.9 2-2H10c0 1.1.9 2 2 2z"/>
@@ -1043,6 +1071,14 @@ watch(() => workshopStore.stNotification, (notif) => {
               </span>
             </template>
           </button>
+
+          <div
+            v-if="!canUseSubscription"
+            class="px-3 py-2 rounded-xl text-xs font-bold"
+            style="background:#FFF7ED; color:#C2410C; border:2px dashed #FDBA74;"
+          >
+            请在酒馆里打开创意工坊后订阅
+          </div>
 
           <!-- 重新同步按钮（仅在需要时显示） -->
           <button

@@ -31,6 +31,14 @@ function getEntryEditorQuery(slug = null) {
   })
 }
 
+function getPackDetailQuery(slug = null, forceRefresh = false) {
+  const query = getEntryEditorQuery(slug)
+  if (forceRefresh) {
+    query.refresh = '1'
+  }
+  return query
+}
+
 function getCurrentPackWorkshopSlug() {
   return workshopStore.currentPack?.workshop?.slug || workshopStore.currentPack?.section || null
 }
@@ -249,7 +257,7 @@ async function handleSubmit() {
     router.push({
       name: 'workshop-pack-detail',
       params: { packId: packId.value },
-      query: getEntryEditorQuery(getCurrentPackWorkshopSlug()),
+      query: getPackDetailQuery(getCurrentPackWorkshopSlug(), true),
     })
   }
 }
@@ -258,7 +266,7 @@ function goBack() {
   router.push({
     name: 'workshop-pack-detail',
     params: { packId: packId.value },
-    query: getEntryEditorQuery(getCurrentPackWorkshopSlug()),
+    query: getPackDetailQuery(getCurrentPackWorkshopSlug()),
   })
 }
 </script>
