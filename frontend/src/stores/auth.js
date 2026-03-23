@@ -13,8 +13,6 @@ export const useAuthStore = defineStore('auth', () => {
   const loading = ref(false)
 
   const isLoggedIn = computed(() => !!user.value)
-  // 是否具有创作者权限（creator 或 admin 均可发布模组）
-  const isCreator = computed(() => user.value?.role === 'creator' || user.value?.role === 'admin')
 
   /**
    * 从 localStorage 恢复认证状态
@@ -197,7 +195,6 @@ export const useAuthStore = defineStore('auth', () => {
     initialized,
     loading,
     isLoggedIn,
-    isCreator,
     getToken,
     getAuthHeaders,
     fetchMe,

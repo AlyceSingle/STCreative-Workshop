@@ -16,9 +16,11 @@ const form = ref({
   name: '',
   description: '',
   worldbook: '',
+  applicant_name: '',
+  applicant_bio: '',
 })
 
-// ── 创作者门控 ───────────────────────────────────────────────────────
+// ── 登录检查 ─────────────────────────────────────────────────────────
 onMounted(async () => {
   // 等待 auth 加载完成
   if (authStore.loading) {
@@ -26,8 +28,9 @@ onMounted(async () => {
       const stop = watch(() => authStore.loading, (v) => { if (!v) { stop(); resolve() } })
     })
   }
-  if (!authStore.isLoggedIn || !authStore.isCreator) {
-    router.replace({ path: '/creator/apply' })
+  // 未登录用户跳转首页
+  if (!authStore.isLoggedIn) {
+    router.replace({ name: 'home' })
   }
 })
 
@@ -37,6 +40,10 @@ async function handleSubmit() {
     workshopStore.error = '工坊名称不能为空'
     return
   }
+  if (!form.value.applicant_name.trim()) {
+    workshopStore.error = '请填写您的名字（网名）'
+    return
+  }
   saving.value = true
   workshopStore.error = null
 
@@ -44,6 +51,8 @@ async function handleSubmit() {
     name: form.value.name.trim(),
     description: form.value.description.trim(),
     worldbook: form.value.worldbook.trim(),
+    applicant_name: form.value.applicant_name.trim(),
+    applicant_bio: form.value.applicant_bio.trim(),
   })
 
   saving.value = false
@@ -151,6 +160,44 @@ function goBack() {
             placeholder="您的世界书(严格，可修改)"
             maxlength="200"
           />
+        </div>
+      </div>
+
+      <!-- 申请人信息 -->
+      <div
+        class="flex flex-col gap-4 p-5"
+        style="border:2px solid #FED7AA; border-radius:16px; background:white;"
+      >
+        <h2 class="font-bold text-base" style="font-family:'Fredoka',sans-serif; color:#92400E;">
+          申请人信息
+        </h2>
+
+        <div class="flex flex-col gap-1">
+          <label class="text-sm font-semibold" style="color:#78716C;">
+            您的名字（网名） *
+          </label>
+          <input
+            v-model="form.applicant_name"
+            type="text"
+            class="input"
+            placeholder="您希望展示的名字或网名"
+            maxlength="50"
+            required
+          />
+        </div>
+
+        <div class="flex flex-col gap-1">
+          <label class="text-sm font-semibold" style="color:#78716C;">
+            补充说明
+            <span class="font-normal text-xs ml-1" style="color:#A8A29E;">可选</span>
+          </label>
+          <textarea
+            v-model="form.applicant_bio"
+            class="input resize-y"
+            style="min-height:80px;"
+            placeholder="随便写点什么补充说明（可选）"
+            maxlength="500"
+          ></textarea>
         </div>
       </div>
 

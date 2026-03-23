@@ -27,6 +27,8 @@ function formatWorkshop(row) {
     worldbook: row.worldbook || '',
     author_id: row.author_id || null,
     status: row.status || 'active',
+    applicant_name: row.applicant_name || '',
+    applicant_bio: row.applicant_bio || '',
     created_at: row.created_at,
   };
 }
@@ -138,35 +140,38 @@ router.get('/workshops', requireAuth, (req, res) => {
   }
 });
 
-// POST /api/workshop/workshops — 创建工坊（仅创作者或管理员）
+// POST /api/workshop/workshops — 创建工坊（所有登录用户均可创建，普通用户需审批）
 router.post('/workshops', requireAuth, (req, res) => {
   const db = getDb();
   const userRow = db.prepare(`SELECT role FROM users WHERE id = ?`).get(req.user.id);
-  if (!userRow || (userRow.role !== 'creator' && userRow.role !== 'admin')) {
-    return res.status(403).json({ error: '只有创作者或管理员才能创建工坊' });
-  }
 
-  const { name, description, worldbook } = req.body;
+  const { name, description, worldbook, applicant_name, applicant_bio } = req.body;
   if (!name || !String(name).trim()) return res.status(400).json({ error: '工坊名称不能为空' });
   if (String(name).trim().length > 50) return res.status(400).json({ error: '工坊名称不能超过 50 字' });
+  if (!applicant_name || !String(applicant_name).trim()) return res.status(400).json({ error: '申请人名字不能为空' });
+  if (String(applicant_name).trim().length > 50) return res.status(400).json({ error: '申请人名字不能超过 50 字' });
+  if (String(applicant_bio || '').trim().length > 500) return res.status(400).json({ error: '申请人简介不能超过 500 字' });
 
   // 自动生成 slug：去除非字母数字汉字字符 + 追加时间戳保证唯一
   const base = String(name).trim().toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]/g, '_');
   const slug = `${base}_${Date.now()}`;
 
   try {
-    // 管理员直接激活，创作者需等待审批
-    const status = (userRow.role === 'admin') ? 'active' : 'pending';
+    // 管理员直接激活，普通用户需等待审批
+    const isAdmin = userRow && userRow.role === 'admin';
+    const status = isAdmin ? 'active' : 'pending';
     const info = db.prepare(`
-      INSERT INTO workshops (name, slug, description, worldbook, author_id, status)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO workshops (name, slug, description, worldbook, author_id, status, applicant_name, applicant_bio)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       String(name).trim(),
       slug,
       String(description || '').trim(),
       String(worldbook || '').trim(),
       req.user.id,
-      status
+      status,
+      String(applicant_name).trim(),
+      String(applicant_bio || '').trim()
     );
     const created = db.prepare(`SELECT * FROM workshops WHERE id = ?`).get(info.lastInsertRowid);
     const msg = status === 'pending' ? '工坊申请已提交，等待管理员审批' : '工坊创建成功';

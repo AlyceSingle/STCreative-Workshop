@@ -38,93 +38,6 @@ router.get('/me', (req, res) => {
 
 // ── 以下路由全部需要管理员登录 ────────────────────────────────────────
 
-// GET /admin/applications — 申请列表，支持 ?status=pending|approved|rejected|all
-router.get('/applications', requireAdmin, (req, res) => {
-  try {
-    const db = getDb();
-    const status = req.query.status || 'pending';
-    let rows;
-    if (status === 'all') {
-      rows = db.prepare(`
-        SELECT ca.*, u.username, u.discord_id, u.avatar, u.role
-        FROM creator_applications ca
-        JOIN users u ON u.id = ca.user_id
-        ORDER BY ca.applied_at DESC
-      `).all();
-    } else {
-      rows = db.prepare(`
-        SELECT ca.*, u.username, u.discord_id, u.avatar, u.role
-        FROM creator_applications ca
-        JOIN users u ON u.id = ca.user_id
-        WHERE ca.status = ?
-        ORDER BY ca.applied_at DESC
-      `).all(status);
-    }
-
-    const data = rows.map(r => ({
-      id: r.id,
-      user_id: r.user_id,
-      status: r.status,
-      reason: r.reason,
-      platform: r.platform || '',
-      published_works: r.published_works || '',
-      admin_note: r.admin_note,
-      applied_at: r.applied_at,
-      reviewed_at: r.reviewed_at,
-      user: {
-        id: r.user_id,
-        username: r.username,
-        discord_id: r.discord_id,
-        avatar: r.avatar,
-        role: r.role,
-      },
-    }));
-    res.json({ data });
-  } catch (err) {
-    console.error('[Admin] 获取申请列表失败:', err);
-    res.status(500).json({ error: '服务器内部错误' });
-  }
-});
-
-// PUT /admin/applications/:id — 审批申请 { action: 'approve'|'reject', note? }
-router.put('/applications/:id', requireAdmin, (req, res) => {
-  try {
-    const db = getDb();
-    const { action, note } = req.body;
-    if (!['approve', 'reject'].includes(action)) {
-      return res.status(400).json({ error: 'action 必须是 approve 或 reject' });
-    }
-
-    const app = db.prepare(`SELECT * FROM creator_applications WHERE id = ?`).get(req.params.id);
-    if (!app) return res.status(404).json({ error: '申请不存在' });
-
-    const newStatus = action === 'approve' ? 'approved' : 'rejected';
-
-    const updateApp = db.prepare(`
-      UPDATE creator_applications SET status = ?, admin_note = ?, reviewed_at = CURRENT_TIMESTAMP WHERE id = ?
-    `);
-    const updateRole = db.prepare(`UPDATE users SET role = ? WHERE id = ?`);
-
-    db.transaction(() => {
-      updateApp.run(newStatus, note || '', app.id);
-      if (action === 'approve') {
-        updateRole.run('creator', app.user_id);
-      } else {
-        // 拒绝时不降级已是创作者的用户
-        const user = db.prepare(`SELECT role FROM users WHERE id = ?`).get(app.user_id);
-        if (user?.role === 'user') {
-          // 保持 user，无需额外操作
-        }
-      }
-    })();
-
-    res.json({ ok: true });
-  } catch (err) {
-    console.error('[Admin] 审批申请失败:', err);
-    res.status(500).json({ error: '服务器内部错误' });
-  }
-});
-
 // GET /admin/users — 用户列表，支持分页 ?page=1&limit=20&q=&role=&is_banned=
 router.get('/users', requireAdmin, (req, res) => {
   try {
@@ -190,13 +103,13 @@ router.get('/users', requireAdmin, (req, res) => {
   }
 });
 
-// PUT /admin/users/:id/role — 修改用户角色 { role: 'user'|'creator'|'admin' }
+// PUT /admin/users/:id/role — 修改用户角色 { role: 'user'|'admin' }
 router.put('/users/:id/role', requireAdmin, (req, res) => {
   try {
     const db = getDb();
     const { role } = req.body;
-    if (!['user', 'creator', 'admin'].includes(role)) {
-      return res.status(400).json({ error: 'role 必须是 user、creator 或 admin' });
+    if (!['user', 'admin'].includes(role)) {
+      return res.status(400).json({ error: 'role 必须是 user 或 admin' });
     }
     const info = db.prepare(`UPDATE users SET role = ? WHERE id = ?`).run(role, req.params.id);
     if (info.changes === 0) return res.status(404).json({ error: '用户不存在' });
@@ -257,10 +170,8 @@ router.get('/users/:id/detail', requireAdmin, (req, res) => {
       ORDER BY p.created_at DESC
     `).all(req.params.id);
 
-    // 该用户创建的工坊（仅创作者/管理员有）
-    const workshops = (user.role === 'creator' || user.role === 'admin')
-      ? db.prepare(`SELECT id, name, slug, description, status, created_at FROM workshops WHERE author_id = ? ORDER BY created_at DESC`).all(req.params.id)
-      : [];
+    // 该用户创建的工坊
+    const workshops = db.prepare(`SELECT id, name, slug, description, status, created_at FROM workshops WHERE author_id = ? ORDER BY created_at DESC`).all(req.params.id);
 
     // 该用户上传的条目总数
     const entryCount = db.prepare(`SELECT COUNT(*) as c FROM workshop_entries WHERE author_id = ?`).get(req.params.id)?.c || 0;
@@ -430,6 +341,8 @@ router.get('/workshops', requireAdmin, (req, res) => {
       worldbook: w.worldbook || '',
       status: w.status || 'active',
       author_id: w.author_id || null,
+      applicant_name: w.applicant_name || '',
+      applicant_bio: w.applicant_bio || '',
       created_at: w.created_at,
       author: w.author_id ? {
         id: w.author_id,
