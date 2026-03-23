@@ -167,6 +167,9 @@ async function handleWorkshopMessage(event) {
   else if (type === 'workshop_unsubscribe') {
     await handleUnsubscribe(payload);
   } 
+  else if (type === 'workshop_check_character') {
+    handleCheckCharacter();
+  } 
   else if (type === 'workshop_sync_changes') {
     await handleSyncChanges(payload);
   } 
@@ -182,6 +185,18 @@ async function handleWorkshopMessage(event) {
   else {
     // 未知消息类型静默忽略
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 检查是否在角色卡中
+// ═══════════════════════════════════════════════════════════════════════════
+
+function handleCheckCharacter() {
+  const { hasCharacter } = getCharacterInfo();
+  sendResult('workshop_check_character_result', {
+    success: true,
+    hasCharacter,
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -466,6 +481,8 @@ async function handleSubscribe(payload) {
     // 如果有角色内容，必须选中角色才能订阅
     if (hasCharacterContent) {
       const { hasCharacter, chId, characters } = getCharacterInfo();
+      console.log("角色卡:"+hasCharacter);
+      
       if (!hasCharacter) {
         const result = { success: false, message: '此资源包含角色正则或开场白，请先进入角色卡再订阅' };
         sendResult('workshop_subscribe_result', result);
@@ -604,10 +621,11 @@ async function handleSubscribe(payload) {
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 取消订阅 Pack（移除世界书条目）
+// 注意：是否允许取消订阅的判断已在后端完成，这里只负责执行删除
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function handleUnsubscribe(payload) {
-  const { packId, worldbookName, entries } = payload;
+  const { packId, worldbookName, hasCharacter: inCharacterCard } = payload;
   if (packId == null || !worldbookName) {
     const result = { success: false, message: '缺少必要参数' };
     sendResult('workshop_unsubscribe_result', result);
@@ -621,26 +639,14 @@ async function handleUnsubscribe(payload) {
       throw new Error('世界书 API 不可用');
     }
 
-    // 分离条目类型
-    const regexEntries = entries ? entries.filter(e => e.type === 'regex') : [];
-    const charRegexEntries = regexEntries.filter(e => e.extra_data && e.extra_data.regex_scope === 'character');
-    const greetingEntries = entries ? entries.filter(e => e.type === 'greeting') : [];
-    const hasCharacterContent = charRegexEntries.length > 0 || greetingEntries.length > 0;
-
-    // 如果有角色内容，必须选中角色才能取消订阅
-    if (hasCharacterContent) {
-      const { hasCharacter } = getCharacterInfo();
-      if (!hasCharacter) {
-        const result = { success: false, message: '此资源包含角色正则或开场白，请先进入角色卡再取消订阅' };
-        sendResult('workshop_unsubscribe_result', result);
-        toastr.warning('请先进入角色卡再取消订阅', 'ST创意工坊', { timeOut: 5000, extendedTimeOut: 2000 });
-        return result;
-      }
-    }
+    // 使用前端传来的角色卡状态（后端已做过验证）
+    const { hasCharacter, chId, characters } = getCharacterInfo();
+    // 如果前端说在角色卡中，以实际检测为准
+    const shouldDeleteCharacterContent = inCharacterCard && hasCharacter;
 
     let removedCount = 0;
 
-    // 1. Worldbook
+    // 1. 删除世界书条目（始终执行）
     const names = await window.TavernHelper.getWorldbookNames();
     if (names.includes(worldbookName)) {
       const { deleted_entries } = await window.TavernHelper.deleteWorldbookEntries(
@@ -651,59 +657,63 @@ async function handleUnsubscribe(payload) {
       removedCount += deleted_entries.length;
     }
 
-    // 2. 全局 Regex（使用 scope: 'all' 与订阅时一致）
-    const globalRegexEntries = regexEntries.filter(e => !(e.extra_data && e.extra_data.regex_scope === 'character'));
-    if (globalRegexEntries.length > 0) {
-      if (!window.TavernHelper || typeof window.TavernHelper.updateTavernRegexesWith !== 'function') {
-        throw new Error('正则 API 不可用');
+    // 2. 删除全局正则（始终执行）
+    if (window.TavernHelper && typeof window.TavernHelper.updateTavernRegexesWith === 'function') {
+      try {
+        await window.TavernHelper.updateTavernRegexesWith(regexes => {
+          const beforeCount = regexes.length;
+          const newRegexes = regexes.filter(r => !(r.id && String(r.id).startsWith(`st_workshop_${packId}_`)));
+          removedCount += (beforeCount - newRegexes.length);
+          return newRegexes;
+        }, { scope: 'all' });
+      } catch (err) {
+        console.warn('[ST创意工坊] 删除全局正则失败:', err);
       }
-      await window.TavernHelper.updateTavernRegexesWith(regexes => {
-        const beforeCount = regexes.length;
-        const newRegexes = regexes.filter(r => !(r.id && String(r.id).startsWith(`st_workshop_${packId}_`)));
-        removedCount += (beforeCount - newRegexes.length);
-        return newRegexes;
-      }, { scope: 'all' });
     }
 
-    // 3. 角色 Regex
-    if (charRegexEntries.length > 0) {
-      if (!window.TavernHelper || typeof window.TavernHelper.updateTavernRegexesWith !== 'function') {
-        throw new Error('正则 API 不可用');
+    // 3. 删除角色正则（仅在角色卡中执行）
+    if (shouldDeleteCharacterContent) {
+      if (window.TavernHelper && typeof window.TavernHelper.updateTavernRegexesWith === 'function') {
+        try {
+          await window.TavernHelper.updateTavernRegexesWith(regexes => {
+            const beforeCount = regexes.length;
+            const newRegexes = regexes.filter(r => !(r.id && String(r.id).startsWith(`st_workshop_${packId}_`)));
+            removedCount += (beforeCount - newRegexes.length);
+            return newRegexes;
+          }, { scope: 'character' });
+        } catch (err) {
+          console.warn('[ST创意工坊] 删除角色正则失败:', err);
+        }
       }
-      await window.TavernHelper.updateTavernRegexesWith(regexes => {
-        const beforeCount = regexes.length;
-        const newRegexes = regexes.filter(r => !(r.id && String(r.id).startsWith(`st_workshop_${packId}_`)));
-        removedCount += (beforeCount - newRegexes.length);
-        return newRegexes;
-      }, { scope: 'character' });
-    }
 
-    // 4. Greeting
-    if (greetingEntries.length > 0) {
-      const { chId, characters } = getCharacterInfo();
-      const char = characters[chId];
-      
-      // 通过隐藏标记识别并删除该 pack 的开场白
-      if (Array.isArray(char.alternate_greetings)) {
-        const beforeLen = char.alternate_greetings.length;
-        char.alternate_greetings = char.alternate_greetings.filter(g => 
-          !g.includes(`<!--st_workshop_${packId}_`)
-        );
-        removedCount += (beforeLen - char.alternate_greetings.length);
-      }
-      if (char.data && Array.isArray(char.data.alternate_greetings)) {
-        char.data.alternate_greetings = char.data.alternate_greetings.filter(g => 
-          !g.includes(`<!--st_workshop_${packId}_`)
-        );
-      }
-      
-      if (typeof window.saveCharacterDebounced === 'function') {
-        window.saveCharacterDebounced();
-      } else if (typeof window.saveMetadata === 'function') {
-        window.saveMetadata();
-      }
-      if (window.eventSource && typeof window.eventSource.emit === 'function') {
-        window.eventSource.emit('characterEdited', chId);
+      // 4. 删除开场白（仅在角色卡中执行）
+      try {
+        const char = characters[chId];
+        if (char) {
+          if (Array.isArray(char.alternate_greetings)) {
+            const beforeLen = char.alternate_greetings.length;
+            char.alternate_greetings = char.alternate_greetings.filter(g => 
+              !g.includes(`<!--st_workshop_${packId}_`)
+            );
+            removedCount += (beforeLen - char.alternate_greetings.length);
+          }
+          if (char.data && Array.isArray(char.data.alternate_greetings)) {
+            char.data.alternate_greetings = char.data.alternate_greetings.filter(g => 
+              !g.includes(`<!--st_workshop_${packId}_`)
+            );
+          }
+          
+          if (typeof window.saveCharacterDebounced === 'function') {
+            window.saveCharacterDebounced();
+          } else if (typeof window.saveMetadata === 'function') {
+            window.saveMetadata();
+          }
+          if (window.eventSource && typeof window.eventSource.emit === 'function') {
+            window.eventSource.emit('characterEdited', chId);
+          }
+        }
+      } catch (err) {
+        console.warn('[ST创意工坊] 删除开场白失败:', err);
       }
     }
 
@@ -1074,7 +1084,7 @@ function getCharacterInfo() {
     try { characters = getContext().characters; } catch(e) {}
   }
 
-  const hasCharacter = chId !== undefined && chId !== null && characters && characters[chId];
+  const hasCharacter = !!(chId !== undefined && chId !== null && characters && characters[chId]);
   return { hasCharacter, chId, characters };
 }
 

@@ -71,7 +71,7 @@ async function handleSubscribe(e) {
   }
   const currentlySubscribed = isSubscribedLocally.value
 
-  // 取消订阅：无需确认，直接执行
+  // 取消订阅：无需确认，直接执行（后端会检查是否需要角色卡环境）
   if (currentlySubscribed) {
     await workshopStore.toggleSubscribe(props.pack, null, 'unsubscribe')
     return

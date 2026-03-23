@@ -313,6 +313,32 @@ export const useWorkshopStore = defineStore('workshop', () => {
 
   // ── 订阅（服务端计数 + 可选 ST 操作）───────────────────────────
 
+  /**
+   * 检查条目集合是否包含危险类型（regex/greeting）
+   * @param {Array} entries - 条目列表
+   * @returns {boolean}
+   */
+  function hasRiskyEntryTypes(entries) {
+    if (!Array.isArray(entries)) return false
+    return entries.some(e => e.entry_type === 'regex' || e.entry_type === 'greeting')
+  }
+
+  /**
+   * 获取条目中的危险类型列表
+   * @param {Array} entries - 条目列表
+   * @returns {string[]}
+   */
+  function getRiskyTypes(entries) {
+    if (!Array.isArray(entries)) return []
+    const types = new Set()
+    entries.forEach(e => {
+      if (e.entry_type === 'regex' || e.entry_type === 'greeting') {
+        types.add(e.entry_type)
+      }
+    })
+    return [...types]
+  }
+
   async function toggleSubscribe(pack, selectedEntryIds = null, forceAction = null) {
     error.value = null
     try {
@@ -328,27 +354,78 @@ export const useWorkshopStore = defineStore('workshop', () => {
         ? selectedEntryIds 
         : (entries ? entries.map(e => e.id) : [])
 
-      // ST 扩展模式：先执行 ST 操作，成功后再调用服务器 API
-      if (stConnected.value) {
-        const isSubscribing = forceAction === 'subscribe' || (!forceAction && !pack.is_subscribed)
+      const isSubscribing = forceAction === 'subscribe' || (!forceAction && !pack.is_subscribed)
 
+      // ST 扩展模式处理
+      if (stConnected.value) {
         if (isSubscribing) {
+          // 订阅：先执行 ST 操作，成功后再调用服务器 API
           const stSuccess = await _subscribeViaST(pack, finalSelectedIds)
           if (!stSuccess) {
-            // ST 订阅失败，不调用服务器 API
             return null
           }
         } else {
-          const stSuccess = await _unsubscribeViaST(pack.id)
-          if (!stSuccess) {
-            // ST 取消订阅失败，不调用服务器 API
+          // 取消订阅：先调用后端 API 检查是否允许，再执行 ST 删除
+          // 传递 in_character_card 让后端判断
+          const { hasCharacter } = await _checkCharacterCard()
+          const apiOptions = {
+            action: 'unsubscribe',
+            in_character_card: hasCharacter
+          }
+          
+          try {
+            const json = await workshopApi.toggleSubscribe(pack.id, apiOptions)
+            
+            // 后端允许取消订阅，执行 ST 删除操作
+            const stSuccess = await _unsubscribeViaST(pack.id, hasCharacter)
+            if (!stSuccess) {
+              // ST 删除失败，但后端已取消订阅，显示警告
+              stNotification.value = { type: 'warning', message: '订阅已取消，但本地内容清理失败' }
+            }
+            
+            // 更新列表/详情中的数据
+            const p = packs.value.find((p) => p.id === pack.id)
+            if (p) {
+              p.is_subscribed = json.subscribed
+              p.sub_count = json.sub_count
+            }
+            if (currentPack.value && currentPack.value.id === pack.id) {
+              currentPack.value.is_subscribed = json.subscribed
+              currentPack.value.sub_count = json.sub_count
+            }
+            
+            // 清除该模组的更新状态
+            const updated = { ...packChanges.value }
+            delete updated[pack.id]
+            packChanges.value = updated
+            
+            return json
+          } catch (err) {
+            // 后端拒绝取消订阅（如包含 regex/greeting 但不在角色卡中）
+            // 注意：request.js 会将错误简化为字符串，所以需要检测 err === 'requires_character_card'
+            if (err.response?.data?.error === 'requires_character_card' || err === 'requires_character_card' || (typeof err === 'string' && err.includes('requires_character_card'))) {
+              const defaultMsg = '取消订阅失败，包含正则/开场白，请进入角色卡内取消'
+              error.value = {
+                type: 'requires_character_card',
+                message: err.response?.data?.message || defaultMsg,
+                risky_types: err.response?.data?.risky_types || []
+              }
+              stNotification.value = { type: 'error', message: error.value.message }
+            } else {
+              error.value = err.message || err || '取消订阅失败'
+              stNotification.value = { type: 'error', message: error.value }
+            }
             return null
           }
         }
       }
+      console.log("准备请求后端");
+      
 
       // 调用服务器 API（带条目级别追踪）
-      const apiOptions = {}
+      const apiOptions = {
+        in_character_card: stConnected.value  // 在 ST 扩展弹窗中 = 角色卡环境
+      }
       if (forceAction) {
         apiOptions.action = forceAction
       }
@@ -392,7 +469,18 @@ export const useWorkshopStore = defineStore('workshop', () => {
 
       return json
     } catch (err) {
-      error.value = err.message || '操作失败'
+      // 特殊处理：需要角色卡环境的错误
+      // 注意：request.js 会将错误简化为字符串，所以需要检测 err === 'requires_character_card'
+      if (err.response?.data?.error === 'requires_character_card' || err === 'requires_character_card' || (typeof err === 'string' && err.includes('requires_character_card'))) {
+        const defaultMsg = '取消订阅失败，包含正则/开场白，请进入角色卡内取消'
+        error.value = {
+          type: 'requires_character_card',
+          message: err.response?.data?.message || defaultMsg,
+          risky_types: err.response?.data?.risky_types || []
+        }
+      } else {
+        error.value = err.message || err || '操作失败'
+      }
       return null
     }
   }
@@ -536,6 +624,18 @@ export const useWorkshopStore = defineStore('workshop', () => {
         return
       }
 
+      // 检查角色卡状态结果
+      if (type === 'workshop_check_character_result') {
+        const key = Object.keys(_pending).find(k => k.startsWith('check_char_'))
+        if (key) {
+          const { resolve } = _pending[key]
+          clearTimeout(_pending[key]?.timer)
+          delete _pending[key]
+          resolve({ success, hasCharacter: event.data.hasCharacter })
+        }
+        return
+      }
+
       // 订阅结果
       if (type === 'workshop_subscribe_result') {
         const key = Object.keys(_pending).find(k => k.startsWith('subscribe_'))
@@ -643,6 +743,17 @@ export const useWorkshopStore = defineStore('workshop', () => {
     }
   }
 
+  // 检查是否在角色卡中
+  async function _checkCharacterCard() {
+    try {
+      const result = await _sendToOpener('workshop_check_character', {}, `check_char_${++_requestCounter}`)
+      return { hasCharacter: result && result.hasCharacter }
+    } catch (err) {
+      console.error('[Workshop] 检查角色卡状态失败:', err)
+      return { hasCharacter: false }
+    }
+  }
+
   // 通过 ST 扩展订阅（postMessage）
   async function _subscribeViaST(pack, selectedEntryIds = null) {
     try {
@@ -698,23 +809,17 @@ export const useWorkshopStore = defineStore('workshop', () => {
   }
 
   // 通过 ST 扩展取消订阅（postMessage）
-  async function _unsubscribeViaST(packId) {
+  // hasCharacter: 是否在角色卡中（决定是否执行角色正则/开场白删除）
+  async function _unsubscribeViaST(packId, hasCharacter = false) {
     try {
-      let entries = []
-      const p = packs.value.find((pack) => pack.id === packId) || currentPack.value
-      if (p && p.id === packId && p.entries) {
-        entries = p.entries
-      } else {
-        const json = await workshopApi.fetchPack(packId)
-        entries = json.data.entries || []
-      }
-      const stEntries = entries.map(entry => toStEntry(entry, packId))
-
       const result = await _sendToOpener('workshop_unsubscribe', {
         packId,
         worldbookName: worldbookName.value,
-        entries: stEntries,
+        hasCharacter,  // 传递角色卡状态，让扩展端决定删除范围
       }, `unsubscribe_${++_requestCounter}`)
+
+      console.log(result);
+      
 
       if (result && result.success) {
         const updated = { ...subscribedPacksInST.value }
@@ -973,8 +1078,12 @@ export const useWorkshopStore = defineStore('workshop', () => {
         await insertPackToWorldbook(pack, selectedIds)
       }
 
-      // 3. 同步到服务器（更新订阅记录）
-      const json = await workshopApi.syncPackUpdates(packId, worldbookNameVal || worldbookName.value)
+      // 3. 同步到服务器（更新订阅记录），传递角色卡环境状态
+      const json = await workshopApi.syncPackUpdates(
+        packId, 
+        worldbookNameVal || worldbookName.value,
+        stConnected.value  // in_character_card
+      )
 
       // 4. 清除该模组的变更状态
       const updated = { ...packChanges.value }
@@ -987,8 +1096,20 @@ export const useWorkshopStore = defineStore('workshop', () => {
       stNotification.value = { type: 'success', message: json.message || '同步成功' }
       return json
     } catch (err) {
-      error.value = err.message || '同步失败'
-      stNotification.value = { type: 'error', message: err.message || '同步失败' }
+      // 特殊处理：需要角色卡环境的错误
+      // 注意：request.js 会将错误简化为字符串
+      if (err.response?.data?.error === 'requires_character_card' || err === 'requires_character_card' || (typeof err === 'string' && err.includes('requires_character_card'))) {
+        const defaultMsg = '同步失败，包含正则/开场白，请进入角色卡内同步'
+        error.value = {
+          type: 'requires_character_card',
+          message: err.response?.data?.message || defaultMsg,
+          risky_types: err.response?.data?.risky_types || []
+        }
+        stNotification.value = { type: 'error', message: error.value.message }
+      } else {
+        error.value = err.message || err || '同步失败'
+        stNotification.value = { type: 'error', message: error.value }
+      }
       return null
     }
   }
@@ -1034,11 +1155,12 @@ export const useWorkshopStore = defineStore('workshop', () => {
     error.value = null
 
     try {
-      // 1. 调用后端 API，更新数据库订阅记录
+      // 1. 调用后端 API，更新数据库订阅记录（传递角色卡环境状态）
       const json = await workshopApi.syncPackUpdatesSelective(
         packId,
         selectedEntryIds,
-        worldbookNameVal || worldbookName.value
+        worldbookNameVal || worldbookName.value,
+        stConnected.value  // in_character_card
       )
 
       const { changes_applied } = json
@@ -1117,8 +1239,20 @@ export const useWorkshopStore = defineStore('workshop', () => {
       return json
     } catch (err) {
       console.error('[Workshop] 选择性同步失败:', err)
-      error.value = err.message || '同步失败'
-      stNotification.value = { type: 'error', message: err.message || '同步失败' }
+      // 特殊处理：需要角色卡环境的错误
+      // 注意：request.js 会将错误简化为字符串
+      if (err.response?.data?.error === 'requires_character_card' || err === 'requires_character_card' || (typeof err === 'string' && err.includes('requires_character_card'))) {
+        const defaultMsg = '同步失败，包含正则/开场白，请进入角色卡内同步'
+        error.value = {
+          type: 'requires_character_card',
+          message: err.response?.data?.message || defaultMsg,
+          risky_types: err.response?.data?.risky_types || []
+        }
+        stNotification.value = { type: 'error', message: error.value.message }
+      } else {
+        error.value = err.message || err || '同步失败'
+        stNotification.value = { type: 'error', message: error.value }
+      }
       return null
     } finally {
       stLoading.value = false
@@ -1188,5 +1322,8 @@ export const useWorkshopStore = defineStore('workshop', () => {
     // 工具函数
     isSillyTavernEnv,
     isFromStExtension,
+    hasRiskyEntryTypes,
+    getRiskyTypes,
+    checkCharacterCard: _checkCharacterCard,
   }
 })

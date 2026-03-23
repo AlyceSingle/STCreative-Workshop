@@ -124,18 +124,9 @@ router.beforeEach(async (to) => {
     if (!authStore.initialized) {
       await authStore.fetchMe()
     }
-    
-    // 检查是否有管理员登录状态（通过一个简单的 cookie 判断，或者如果当前是管理员跳转，可以加个放行）
-    // 为了简单起见，如果请求能通过后端，前端我们暂时先尝试放行
-    // 由于前端路由守卫只看 authStore.isLoggedIn，如果没登录会跳转到 home
-    // 我们可以加一个标记，如果知道是管理员，就不拦截
-    const isAdminSession = document.cookie.includes('connect.sid'); // 这只是个粗略判断
-    // 更好的方式：管理员登录后可能设置了 localStorage 或者可以直接调用 api 判断
-    const hasAdminFlag = localStorage.getItem('isAdmin') === 'true';
 
-    if (!authStore.isLoggedIn && !hasAdminFlag) {
-      // 在跳转前弹出提示，这样更及时
-      window.alert('请先登录后再游览工坊内容')
+    if (!authStore.isLoggedIn) {
+      window.alert('请先登录后再浏览工坊内容')
       return { name: 'home' }
     }
   }

@@ -54,6 +54,7 @@ async function toggleLike(packId) {
  * @param {number[]} [options.selected_entry_ids] - 选中的条目 ID 列表
  * @param {string} [options.worldbook_name] - 目标世界书名称
  * @param {Object} [options.synced_version_map] - 条目版本映射 { entryId: version }
+ * @param {boolean} [options.in_character_card] - 是否在角色卡环境中
  */
 async function toggleSubscribe(packId, options = {}) {
   const payload = {}
@@ -61,6 +62,7 @@ async function toggleSubscribe(packId, options = {}) {
   if (options.selected_entry_ids) payload.selected_entry_ids = options.selected_entry_ids
   if (options.worldbook_name) payload.worldbook_name = options.worldbook_name
   if (options.synced_version_map) payload.synced_version_map = options.synced_version_map
+  if (options.in_character_card !== undefined) payload.in_character_card = options.in_character_card
   return request.post(`/api/workshop/packs/${packId}/subscribe`, payload)
 }
 
@@ -68,9 +70,13 @@ async function toggleSubscribe(packId, options = {}) {
  * 同步模组更新（全量同步）
  * @param {number} packId - 模组 ID
  * @param {string} worldbookName - 目标世界书名称
+ * @param {boolean} inCharacterCard - 是否在角色卡环境中
  */
-async function syncPackUpdates(packId, worldbookName = '') {
-  return request.post(`/api/workshop/packs/${packId}/sync`, { worldbook_name: worldbookName })
+async function syncPackUpdates(packId, worldbookName = '', inCharacterCard = false) {
+  return request.post(`/api/workshop/packs/${packId}/sync`, { 
+    worldbook_name: worldbookName,
+    in_character_card: inCharacterCard
+  })
 }
 
 /**
@@ -78,11 +84,13 @@ async function syncPackUpdates(packId, worldbookName = '') {
  * @param {number} packId - 模组 ID
  * @param {number[]} entryIds - 选中的条目 ID 列表
  * @param {string} worldbookName - 目标世界书名称
+ * @param {boolean} inCharacterCard - 是否在角色卡环境中
  */
-async function syncPackUpdatesSelective(packId, entryIds, worldbookName = '') {
+async function syncPackUpdatesSelective(packId, entryIds, worldbookName = '', inCharacterCard = false) {
   return request.post(`/api/workshop/packs/${packId}/sync-selective`, {
     entry_ids: entryIds,
-    worldbook_name: worldbookName
+    worldbook_name: worldbookName,
+    in_character_card: inCharacterCard
   })
 }
 

@@ -126,8 +126,8 @@ const VALID_ROLES = ['system', 'user', 'assistant'];
 
 // ── Workshop 路由 ────────────────────────────────────────────────────
 
-// GET /api/workshop/workshops — 公开获取所有工坊列表
-router.get('/workshops', (req, res) => {
+// GET /api/workshop/workshops — 获取所有工坊列表（需要登录）
+router.get('/workshops', requireAuth, (req, res) => {
   const db = getDb();
   try {
     const rows = db.prepare(`SELECT * FROM workshops WHERE status = 'active' ORDER BY id ASC`).all();
@@ -234,7 +234,7 @@ router.delete('/workshops/:id', requireAuth, (req, res) => {
 // ── Pack 路由 ────────────────────────────────────────────────────────
 
 // GET /api/workshop — 获取 pack 列表，按热度排序（like_count + sub_count）
-router.get('/', optionalAuth, (req, res) => {
+router.get('/', requireAuth, (req, res) => {
   const db = getDb();
   const page = Math.max(1, parseInt(req.query.page) || 1);
   const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
@@ -324,7 +324,7 @@ router.get('/', optionalAuth, (req, res) => {
 });
 
 // GET /api/workshop/packs/:packId — 获取单个 pack 详情（含条目列表）
-router.get('/packs/:packId', optionalAuth, (req, res) => {
+router.get('/packs/:packId', requireAuth, (req, res) => {
   const db = getDb();
   const packId = parseInt(req.params.packId);
   if (isNaN(packId)) return res.status(400).json({ error: '无效的模组 ID' });
@@ -562,7 +562,9 @@ router.post('/packs/:packId/subscribe', requireAuth, (req, res) => {
   const pack = db.prepare(`SELECT id FROM workshop_packs WHERE id = ?`).get(packId);
   if (!pack) return res.status(404).json({ error: '模组不存在' });
 
-  const { action, selected_entry_ids, worldbook_name } = req.body || {};
+  const { action, selected_entry_ids, worldbook_name, in_character_card } = req.body || {};
+  
+  console.log('[Workshop] 订阅操作:', { packId, action, in_character_card, selected_entry_ids });
 
   // 验证 selected_entry_ids 数组
   const entryIds = Array.isArray(selected_entry_ids) 
@@ -583,6 +585,37 @@ router.post('/packs/:packId/subscribe', requireAuth, (req, res) => {
   const versionMapJson = JSON.stringify(versionMap);
 
   try {
+    // 取消订阅时检查是否包含危险类型（regex/greeting）
+    if (action === 'unsubscribe') {
+      // 查询当前订阅的条目类型
+      const subscription = db.prepare(`SELECT selected_entry_ids FROM workshop_subscriptions WHERE user_id = ? AND pack_id = ?`).get(req.user.id, packId);
+      console.log('[Workshop] 取消订阅检查:', { subscription, in_character_card });
+      
+      if (subscription) {
+        const subscribedIds = JSON.parse(subscription.selected_entry_ids || '[]');
+        if (subscribedIds.length > 0) {
+          const placeholders = subscribedIds.map(() => '?').join(',');
+          const riskyEntries = db.prepare(`
+            SELECT id, entry_type FROM workshop_entries 
+            WHERE id IN (${placeholders}) AND entry_type IN ('regex', 'greeting')
+          `).all(...subscribedIds);
+          
+          console.log('[Workshop] 危险条目检查:', { subscribedIds, riskyEntries, in_character_card });
+          
+          // 如果包含危险类型且不在角色卡环境中，阻止取消订阅
+          if (riskyEntries.length > 0 && !in_character_card) {
+            const riskyTypes = [...new Set(riskyEntries.map(e => e.entry_type))];
+            return res.status(400).json({
+              error: 'requires_character_card',
+              message: '此订阅包含正则脚本或开场白内容，必须在角色卡中才能取消订阅',
+              risky_types: riskyTypes,
+              requires_character_card: true
+            });
+          }
+        }
+      }
+    }
+
     const toggleSub = db.transaction(() => {
       const existing = db.prepare(`SELECT 1 FROM workshop_subscriptions WHERE user_id = ? AND pack_id = ?`).get(req.user.id, packId);
       
@@ -657,15 +690,27 @@ router.post('/packs/:packId/sync', requireAuth, (req, res) => {
     return res.status(400).json({ error: '您尚未订阅此模组' });
   }
 
-  const { worldbook_name } = req.body || {};
+  const { worldbook_name, in_character_card } = req.body || {};
   const worldbookNameVal = String(worldbook_name || '').trim();
 
   try {
     // 获取模组当前所有活跃条目
     const activeEntries = db.prepare(`
-      SELECT id, version FROM workshop_entries 
+      SELECT id, version, entry_type FROM workshop_entries 
       WHERE pack_id = ? AND (is_deleted = 0 OR is_deleted IS NULL)
     `).all(packId);
+
+    // 检查是否包含危险类型（regex/greeting）
+    const riskyEntries = activeEntries.filter(e => e.entry_type === 'regex' || e.entry_type === 'greeting');
+    if (riskyEntries.length > 0 && !in_character_card) {
+      const riskyTypes = [...new Set(riskyEntries.map(e => e.entry_type))];
+      return res.status(400).json({
+        error: 'requires_character_card',
+        message: '本次同步包含正则脚本或开场白内容，必须在角色卡中才能同步',
+        risky_types: riskyTypes,
+        requires_character_card: true
+      });
+    }
 
     // 构建新的选中条目 ID 列表和版本映射
     const newSelectedIds = activeEntries.map(e => e.id);
@@ -719,7 +764,7 @@ router.post('/packs/:packId/sync-selective', requireAuth, (req, res) => {
     return res.status(400).json({ error: '您尚未订阅此模组' });
   }
 
-  const { entry_ids, worldbook_name } = req.body || {};
+  const { entry_ids, worldbook_name, in_character_card } = req.body || {};
   
   if (!Array.isArray(entry_ids)) {
     return res.status(400).json({ error: '参数 entry_ids 必须是数组' });
@@ -728,6 +773,26 @@ router.post('/packs/:packId/sync-selective', requireAuth, (req, res) => {
   const worldbookNameVal = String(worldbook_name || '').trim();
 
   try {
+    // 检查选中的条目是否包含危险类型（regex/greeting）
+    if (entry_ids.length > 0) {
+      const placeholders = entry_ids.map(() => '?').join(',');
+      const riskyEntries = db.prepare(`
+        SELECT id, entry_type FROM workshop_entries 
+        WHERE id IN (${placeholders}) AND entry_type IN ('regex', 'greeting')
+      `).all(...entry_ids.map(id => parseInt(id)));
+      
+      // 如果包含危险类型且不在角色卡环境中，阻止同步
+      if (riskyEntries.length > 0 && !in_character_card) {
+        const riskyTypes = [...new Set(riskyEntries.map(e => e.entry_type))];
+        return res.status(400).json({
+          error: 'requires_character_card',
+          message: '本次同步包含正则脚本或开场白内容，必须在角色卡中才能同步',
+          risky_types: riskyTypes,
+          requires_character_card: true
+        });
+      }
+    }
+
     // 解析当前订阅状态
     const selectedIds = JSON.parse(subscription.selected_entry_ids || '[]');
     const syncedVersions = JSON.parse(subscription.synced_version_map || '{}');
@@ -980,8 +1045,8 @@ router.post('/packs/:packId/entries/batch', requireAuth, (req, res) => {
   }
 });
 
-// GET /api/workshop/entries/:entryId — 获取单条条目
-router.get('/entries/:entryId', (req, res) => {
+// GET /api/workshop/entries/:entryId — 获取单条条目（需要登录）
+router.get('/entries/:entryId', requireAuth, (req, res) => {
   const db = getDb();
   const entryId = parseInt(req.params.entryId);
   if (isNaN(entryId)) return res.status(400).json({ error: '无效的条目 ID' });
