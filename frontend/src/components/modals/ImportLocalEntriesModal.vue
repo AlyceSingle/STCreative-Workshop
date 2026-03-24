@@ -10,6 +10,8 @@ const props = defineProps({
   },
 })
 
+//TODO批量导入会出现错误
+
 const emit = defineEmits(['confirm', 'cancel', 'close'])
 
 const workshopStore = useWorkshopStore()
@@ -98,19 +100,31 @@ function convertStEntryToSystem(entry) {
     entry_type: 'worldbook',
   }
 
-  const strategyType = entry.constant ? 'constant' : (entry.vectorized ? 'vectorized' : 'selective')
+  const strategy = entry.strategy || {}
+  const position = entry.position || {}
+  const recursion = entry.recursion || {}
+  const effect = entry.effect || {}
+
+  const strategyType = strategy.type
+    || (entry.constant ? 'constant' : (entry.vectorized ? 'vectorized' : 'selective'))
   result.strategy_type = strategyType
-  result.keys = Array.isArray(entry.key) ? entry.key : (Array.isArray(entry.keys) ? entry.keys : [])
-  result.keys_secondary = Array.isArray(entry.keysecondary) ? entry.keysecondary : (Array.isArray(entry.keys_secondary) ? entry.keys_secondary : [])
+  result.keys = strategy.keys || entry.key || entry.keys || []
+  
+  const keysSecondary = strategy.keys_secondary || {}
+  result.keys_secondary = keysSecondary.keys || entry.keysecondary || entry.keys_secondary || []
   
   const selectiveLogicMap = {
     0: 'and_any',
     1: 'not_all',
     2: 'not_any',
     3: 'and_all',
+    and_any: 'and_any',
+    not_all: 'not_all',
+    not_any: 'not_any',
+    and_all: 'and_all',
   }
-  result.keys_secondary_logic = selectiveLogicMap[entry.selectiveLogic] || 'and_any'
-  result.scan_depth = entry.scanDepth ?? 'same_as_global'
+  result.keys_secondary_logic = selectiveLogicMap[keysSecondary.logic ?? entry.selectiveLogic] || 'and_any'
+  result.scan_depth = strategy.scan_depth ?? entry.scanDepth ?? 'same_as_global'
 
   const ST_POSITION_MAP = {
     0: 'before_character_definition',
@@ -125,17 +139,17 @@ function convertStEntryToSystem(entry) {
     9: 'before_system_prompt',
     10: 'after_system_prompt',
   }
-  result.position_type = ST_POSITION_MAP[entry.position] || 'after_character_definition'
-  result.position_depth = entry.depth ?? 4
-  result.position_order = entry.order ?? 100
-  result.position_role = entry.role || 'system'
+  result.position_type = position.type || ST_POSITION_MAP[entry.position] || 'after_character_definition'
+  result.position_depth = position.depth ?? entry.depth ?? 4
+  result.position_order = position.order ?? entry.order ?? 100
+  result.position_role = position.role || entry.role || 'system'
   result.probability = entry.probability ?? 100
-  result.recursion_prevent_incoming = !!entry.preventRecursion
-  result.recursion_prevent_outgoing = !!entry.excludeRecursion
-  result.recursion_delay_until = entry.delayUntilRecursion ? 1 : null
-  result.effect_sticky = entry.sticky || null
-  result.effect_cooldown = entry.cooldown || null
-  result.effect_delay = entry.delay || null
+  result.recursion_prevent_incoming = recursion.prevent_incoming ?? !!entry.preventRecursion
+  result.recursion_prevent_outgoing = recursion.prevent_outgoing ?? !!entry.excludeRecursion
+  result.recursion_delay_until = recursion.delay_until ?? (entry.delayUntilRecursion ? 1 : null)
+  result.effect_sticky = effect.sticky ?? entry.sticky ?? null
+  result.effect_cooldown = effect.cooldown ?? entry.cooldown ?? null
+  result.effect_delay = effect.delay ?? entry.delay ?? null
 
   return result
 }
