@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref, onMounted } from 'vue'
-import { useWorkshopStore } from '@/stores/workshop'
+import { useWorkshopStore } from '@/stores/workshop.js'
 
 const workshopStore = useWorkshopStore()
 

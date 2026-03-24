@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
-import { useWorkshopStore } from '@/stores/workshop'
+import { useWorkshopStore } from '@/stores/workshop.js'
 
 const props = defineProps({
   modelValue: { type: String, default: '' },

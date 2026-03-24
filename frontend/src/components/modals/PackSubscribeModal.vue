@@ -1,7 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 
-import ConfirmModal from '@/components/ConfirmModal.vue'
+import ConfirmModal from '@/components/common/ConfirmModal.vue'
 
 const props = defineProps({
   packTitle: {

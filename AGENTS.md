@@ -47,7 +47,26 @@ STCreativeWorkshop/
 │   │   └── index.js           # 统一导出所有 API 模块
 │   ├── utils/
 │   │   └── request.js         # Axios 封装，提供 get/post/put/delete/patch 方法
-│   ├── components/             # ConfirmModal, Navbar, WorkshopPackCard, WorkshopEntryCard, StoryCard, TagFilter
+│   ├── components/             # 组件按功能分组
+│   │   ├── common/             # 通用基础组件
+│   │   │   ├── ConfirmModal.vue    # 确认弹窗
+│   │   │   ├── CustomSelect.vue    # 自定义下拉选择
+│   │   │   ├── SearchSelect.vue    # 带搜索的下拉选择
+│   │   │   ├── Toast.vue           # 消息提示单项
+│   │   │   └── ToastContainer.vue  # 消息提示容器
+│   │   ├── layout/             # 布局组件
+│   │   │   └── Navbar.vue          # 导航栏
+│   │   ├── cards/              # 业务卡片组件
+│   │   │   ├── StoryCard.vue       # 故事卡片
+│   │   │   ├── WorkshopPackCard.vue    # 模组卡片
+│   │   │   └── WorkshopEntryCard.vue   # 条目卡片
+│   │   ├── modals/             # 业务弹窗组件
+│   │   │   ├── ImportLocalEntriesModal.vue  # 本地条目导入弹窗
+│   │   │   ├── PackSubscribeModal.vue       # 模组订阅确认弹窗
+│   │   │   └── PackUpdateModal.vue          # 模组更新弹窗
+│   │   └── filters/            # 筛选/选择组件
+│   │       ├── CharacterSelector.vue   # 角色卡选择器
+│   │       └── TagFilter.vue           # 标签筛选器
 │   ├── config/sections.js      # TAG_GROUPS, DEFAULT_TAGS, localStorage worldbook helpers
 │   ├── router/index.js         # Vue Router; auth guard redirects to { name: 'workshop' }
 │   ├── stores/                 # Pinia: auth.js, stories.js, workshop.js

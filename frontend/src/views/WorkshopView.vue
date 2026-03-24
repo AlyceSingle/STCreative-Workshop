@@ -3,7 +3,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute, onBeforeRouteLeave } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useWorkshopStore } from '@/stores/workshop'
-import WorkshopPackCard from '@/components/WorkshopPackCard.vue'
+import WorkshopPackCard from '@/components/cards/WorkshopPackCard.vue'
 import { DEFAULT_TAGS } from '@/config/sections'
 import { readWorkshopViewState, writeWorkshopViewState } from '@/utils/workshopViewState'
 

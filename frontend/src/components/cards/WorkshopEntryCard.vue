@@ -1,8 +1,8 @@
 <script setup>
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { useAuthStore } from '@/stores/auth'
-import { useWorkshopStore } from '@/stores/workshop'
+import { useAuthStore } from '@/stores/auth.js'
+import { useWorkshopStore } from '@/stores/workshop.js'
 
 const props = defineProps({
   entry: {

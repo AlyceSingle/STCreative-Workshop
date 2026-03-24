@@ -1,11 +1,11 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import PackSubscribeModal from '@/components/PackSubscribeModal.vue'
-import PackUpdateModal from '@/components/PackUpdateModal.vue'
-import { useWorkshopStore } from '@/stores/workshop'
-import { useAuthStore } from '@/stores/auth'
-import { sanitizeWorkshopQuery } from '@/utils/workshopViewState'
+import PackSubscribeModal from '@/components/modals/PackSubscribeModal.vue'
+import PackUpdateModal from '@/components/modals/PackUpdateModal.vue'
+import { useWorkshopStore } from '@/stores/workshop.js'
+import { useAuthStore } from '@/stores/auth.js'
+import { sanitizeWorkshopQuery } from '@/utils/workshopViewState.js'
 
 const props = defineProps({
   pack: {

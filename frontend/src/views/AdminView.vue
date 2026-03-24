@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import adminApi from '@/api/admin'
-import CustomSelect from '../components/CustomSelect.vue'
+import CustomSelect from '../components/common/CustomSelect.vue'
 
 const router = useRouter()
 

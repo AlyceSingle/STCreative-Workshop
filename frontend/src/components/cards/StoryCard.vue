@@ -62,6 +62,7 @@
 
 <script setup>
 import { computed } from 'vue'
+import {createRouter as $router} from "vue-router";
 
 const props = defineProps({
   story: {

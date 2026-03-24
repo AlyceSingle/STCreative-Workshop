@@ -3,7 +3,7 @@ import { ref, watch, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useWorkshopStore } from '@/stores/workshop'
 import { useAuthStore } from '@/stores/auth'
-import ConfirmModal from '@/components/ConfirmModal.vue'
+import ConfirmModal from '@/components/common/ConfirmModal.vue'
 import { buildWorkshopBackRoute } from '@/utils/workshopViewState'
 
 const router = useRouter()
