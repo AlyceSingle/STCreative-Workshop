@@ -121,7 +121,6 @@ const config = computed(() => typeConfig[props.type] || typeConfig.info)
   min-width: 280px;
   max-width: 400px;
   transform: rotate(-0.3deg);
-  animation: toast-slide-in 0.35s ease-out;
 }
 
 .toast-icon {
@@ -176,16 +175,5 @@ const config = computed(() => typeConfig[props.type] || typeConfig.info)
 .toast-close svg {
   width: 100%;
   height: 100%;
-}
-
-@keyframes toast-slide-in {
-  from {
-    opacity: 0;
-    transform: translateX(100%) rotate(2deg);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0) rotate(-0.3deg);
-  }
 }
 </style>
