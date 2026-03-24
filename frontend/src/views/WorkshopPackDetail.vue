@@ -4,8 +4,10 @@ import { useRouter, useRoute } from 'vue-router'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import PackSubscribeModal from '@/components/PackSubscribeModal.vue'
 import PackUpdateModal from '@/components/PackUpdateModal.vue'
+import ImportLocalEntriesModal from '@/components/ImportLocalEntriesModal.vue'
 import { useWorkshopStore } from '@/stores/workshop'
 import { useAuthStore } from '@/stores/auth'
+import { toast } from '@/composables/useToast'
 import { buildWorkshopBackRoute, sanitizeWorkshopQuery } from '@/utils/workshopViewState'
 
 const router = useRouter()
@@ -35,6 +37,12 @@ const entryCountLabel = computed(() => {
 
 // 批量导入文件输入
 const batchFileInput = ref(null)
+
+// 导入本地条目弹窗
+const showImportLocalModal = ref(false)
+
+// 检测是否在酒馆 iframe 环境中
+const isInStIframe = computed(() => workshopStore.stConnected)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 导出格式转换辅助函数
@@ -188,6 +196,35 @@ function handleBatchExport() {
 // 批量导入 JSON
 function triggerBatchImport() {
   batchFileInput.value?.click()
+}
+
+// 打开导入本地条目弹窗
+function openImportLocalModal() {
+  if (!isInStIframe.value) {
+    toast.error('此功能需要在 SillyTavern 环境中使用')
+    return
+  }
+  showImportLocalModal.value = true
+}
+
+// 处理从本地世界书导入的条目
+async function handleImportLocalEntries(entries) {
+  if (!entries || entries.length === 0) return
+  
+  importingEntries.value = true
+  try {
+    const ok = await workshopStore.createEntries(packId.value, entries)
+    if (ok) {
+      await workshopStore.fetchPack(packId.value)
+      toast.success(`成功导入 ${entries.length} 条条目`)
+    }
+  } catch (err) {
+    console.error('[WorkshopPackDetail] 导入本地条目失败:', err)
+    workshopStore.error = '导入本地条目失败'
+  } finally {
+    importingEntries.value = false
+    showImportLocalModal.value = false
+  }
 }
 
 /**
@@ -1187,6 +1224,14 @@ watch(() => workshopStore.stNotification, (notif) => {
         <div class="flex items-center gap-2">
           <template v-if="canAddEntry">
             <input type="file" ref="batchFileInput" class="hidden" accept=".json" multiple @change="handleBatchImport" />
+            <button type="button" class="btn-secondary text-sm py-1.5 px-3" @click="openImportLocalModal">
+              <svg class="w-4 h-4 inline-block mr-1 -mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+              导入本地条目
+            </button>
             <button type="button" class="btn-secondary text-sm py-1.5 px-3" @click="triggerBatchImport">
               导入 JSON
             </button>
@@ -1550,5 +1595,13 @@ watch(() => workshopStore.stNotification, (notif) => {
     :syncing="syncingUpdates"
     @close="showUpdateModal = false"
     @sync-selective="handleSyncUpdatesSelective"
+  />
+
+  <!-- 导入本地条目弹窗 -->
+  <ImportLocalEntriesModal
+    :visible="showImportLocalModal"
+    @confirm="handleImportLocalEntries"
+    @cancel="showImportLocalModal = false"
+    @close="showImportLocalModal = false"
   />
 </template>
