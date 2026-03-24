@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { useWorkshopStore } from '@/stores/workshop'
+import SearchSelect from './SearchSelect.vue'
 
 const props = defineProps({
   visible: {
@@ -22,6 +23,13 @@ const selectedEntryIndices = ref([])
 
 const hasEntries = computed(() => worldbookEntries.value.length > 0)
 const selectedCount = computed(() => selectedEntryIndices.value.length)
+
+const worldbookOptions = computed(() => {
+  return worldbookList.value.map(name => ({
+    value: name,
+    label: name
+  }))
+})
 
 watch(selectedWorldbook, async (newVal) => {
   if (newVal) {
@@ -223,17 +231,15 @@ watch(() => props.visible, (newVal) => {
             <div class="flex flex-col gap-3">
               <div class="flex flex-col gap-1.5">
                 <label class="text-[10px] font-bold text-[#92400E] uppercase tracking-wider">选择世界书</label>
-                <select
+                <SearchSelect
                   v-model="selectedWorldbook"
-                  class="input text-sm py-1.5"
+                  :options="worldbookOptions"
                   :disabled="loading"
-                >
-                  <option v-if="loading" value="">加载中...</option>
-                  <option v-else-if="worldbookList.length === 0" value="">暂无世界书</option>
-                  <option v-for="name in worldbookList" :key="name" :value="name">
-                    {{ name }}
-                  </option>
-                </select>
+                  :loading="loading"
+                  placeholder="请选择世界书"
+                  search-placeholder="搜索世界书..."
+                  empty-text="暂无世界书"
+                />
               </div>
 
               <div v-if="entriesLoading" class="flex items-center justify-center py-8">
