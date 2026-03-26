@@ -14,7 +14,6 @@ const routes = [
     path: '/workshop',
     name: 'workshop',
     component: () => import('@/views/WorkshopView.vue'),
-    meta: { requiresAuth: true },
   },
   {
     path: '/workshop/new',
@@ -39,7 +38,6 @@ const routes = [
     path: '/workshop/:packId',
     name: 'workshop-pack-detail',
     component: () => import('@/views/WorkshopPackDetail.vue'),
-    meta: { requiresAuth: true },
   },
   {
     path: '/workshop/:packId/edit',

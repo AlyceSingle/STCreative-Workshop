@@ -4,6 +4,10 @@ async function fetchWorkshops() {
   return request.get('/api/workshop/workshops')
 }
 
+async function fetchWorkshopBySlug(slug) {
+  return request.get(`/api/workshop/workshops/by-slug/${encodeURIComponent(slug)}`)
+}
+
 async function createWorkshop(payload) {
   return request.post('/api/workshop/workshops', payload)
 }
@@ -130,6 +134,7 @@ async function fetchPackChanges(packId) {
 
 export default {
   fetchWorkshops,
+  fetchWorkshopBySlug,
   createWorkshop,
   updateWorkshop,
   deleteWorkshop,

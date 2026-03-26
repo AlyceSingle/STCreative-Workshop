@@ -76,6 +76,16 @@ function toStEntry(entry, packId) {
   }
 }
 
+function isUnauthorizedError(err) {
+  if (!err) return false
+
+  if (typeof err === 'string') {
+    return err === 'Unauthorized' || err.includes('请先登录')
+  }
+
+  return err.response?.status === 401 || err.message === 'Unauthorized' || String(err.message || '').includes('请先登录')
+}
+
 export const useWorkshopStore = defineStore('workshop', () => {
   // ── Pack 列表状态 ────────────────────────────────────────────
   const packs = ref([])
@@ -117,6 +127,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
   const currentCharWorldbooks = ref({ primary: null, additional: [] })
   const worldbookEntriesMap = ref({})
   const dynamicWorldbooksLoading = ref(false)
+  const workshopMetaMap = ref({})
 
   function setWorldbookName(slug, name) {
     worldbookName.value = name
@@ -129,9 +140,14 @@ export const useWorkshopStore = defineStore('workshop', () => {
     if (stored) {
       worldbookName.value = stored
     } else {
-      const w = workshops.value.find(w => w.slug === slug)
+      const w = workshopMetaMap.value[slug] || workshops.value.find(w => w.slug === slug)
       worldbookName.value = w?.worldbook || slug
     }
+  }
+
+  function getWorkshopBySlug(slug) {
+    if (!slug) return null
+    return workshopMetaMap.value[slug] || workshops.value.find(w => w.slug === slug) || null
   }
 
   // ── 工坊 API 操作 ────────────────────────────────────────────
@@ -150,15 +166,49 @@ export const useWorkshopStore = defineStore('workshop', () => {
     }
   }
 
+  function resetUserState() {
+    mySubscriptions.value = []
+    packChanges.value = {}
+  }
+
   async function fetchWorkshops() {
     workshopsLoading.value = true
     try {
       const json = await workshopApi.fetchWorkshops()
       workshops.value = json.data
+      const nextMap = { ...workshopMetaMap.value }
+      for (const workshop of json.data) {
+        nextMap[workshop.slug] = workshop
+      }
+      workshopMetaMap.value = nextMap
     } catch (err) {
-      error.value = err.message || '获取工坊列表失败'
+      error.value = isUnauthorizedError(err) ? '请先登录后查看该工坊内容' : (err.message || err || '获取工坊列表失败')
     } finally {
       workshopsLoading.value = false
+    }
+  }
+
+  async function fetchWorkshopBySlug(slug) {
+    if (!slug) return null
+
+    const cached = workshopMetaMap.value[slug] || workshops.value.find(w => w.slug === slug)
+    if (cached) {
+      return cached
+    }
+
+    try {
+      const json = await workshopApi.fetchWorkshopBySlug(slug)
+      const workshop = json.data || null
+      if (workshop) {
+        workshopMetaMap.value = {
+          ...workshopMetaMap.value,
+          [slug]: workshop,
+        }
+      }
+      return workshop
+    } catch (err) {
+      error.value = isUnauthorizedError(err) ? '请先登录后查看该工坊内容' : (err.message || err || '获取工坊信息失败')
+      return null
     }
   }
 
@@ -228,7 +278,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
         pagination.value = json.pagination
       }
     } catch (err) {
-      error.value = err.message || '获取 Pack 列表失败'
+      error.value = isUnauthorizedError(err) ? '请先登录后查看该工坊内容' : (err.message || err || '获取 Pack 列表失败')
     } finally {
       loading.value = false
     }
@@ -424,8 +474,6 @@ export const useWorkshopStore = defineStore('workshop', () => {
           }
         }
       }
-      console.log("准备请求后端");
-      
 
       // 调用服务器 API（带条目级别追踪）
       const apiOptions = {
@@ -556,14 +604,23 @@ export const useWorkshopStore = defineStore('workshop', () => {
   function _setupMessageListener() {
     if (_listenerAdded) return
     _listenerAdded = true
+    console.log('[Workshop] 已注册 ST 扩展消息监听器')
 
     window.addEventListener('message', (event) => {
       const { type, success, message, packIds, entryCountMap, removedCount, source, primary, additional } = event.data || {}
       if (!type) return
+      console.log('[Workshop] 收到 postMessage:', {
+        type,
+        source,
+        sameAsOpener: event.source === window.opener,
+        sameAsParent: window.parent && window.parent !== window ? event.source === window.parent : false,
+        sameAsSavedExtension: event.source === _stExtensionWindow,
+      })
 
       // 特殊处理：接收来自 ST 扩展的 opener 引用
       if (type === 'st_extension_opener' && source === 'st_workshop_extension') {
         _stExtensionWindow = event.source
+        console.log('[Workshop] 收到 st_extension_opener，已保存扩展窗口引用并立即发送 workshop_ping')
         // 立即发送 ping
         if (_stExtensionWindow) {
           _stExtensionWindow.postMessage({ type: 'workshop_ping', payload: {} }, '*')
@@ -571,14 +628,21 @@ export const useWorkshopStore = defineStore('workshop', () => {
         return
       }
 
-      // 安全检查：必须来自 opener、已保存的扩展窗口或 parent（iframe 模式）
+      // 安全检查：必须来自 opener、已保存的扩展窗口、parent（iframe 模式）或酒馆助手脚本
+      // 酒馆助手脚本运行在 ST 主页面的子 iframe 中，所以 event.source 不是 window.parent
+      // 但它发送的消息是有效的，我们通过消息类型前缀来识别
       const isFromParent = window.parent && window.parent !== window && event.source === window.parent
-      if (event.source !== window.opener && event.source !== _stExtensionWindow && !isFromParent) {
+      const isWorkshopMessage = type.startsWith('workshop_')
+      
+      // 如果是 workshop_ 开头的消息，放宽检查（脚本版本兼容）
+      // 否则必须严格检查来源
+      if (!isWorkshopMessage && event.source !== window.opener && event.source !== _stExtensionWindow && !isFromParent) {
         return
       }
 
       // 握手响应
       if (type === 'workshop_pong') {
+        console.log('[Workshop] 收到 workshop_pong，连接已建立')
         stConnected.value = true
         return
       }
@@ -686,6 +750,12 @@ export const useWorkshopStore = defineStore('workshop', () => {
       const targetWindow = _stExtensionWindow || window.opener || (window.parent !== window ? window.parent : null)
       
       if (!targetWindow || targetWindow === window) {
+        console.warn('[Workshop] 发送消息失败，未找到可用的 ST 扩展窗口:', {
+          type,
+          hasSavedExtension: !!_stExtensionWindow,
+          hasOpener: !!(window.opener && window.opener !== window),
+          hasParent: !!(window.parent && window.parent !== window),
+        })
         reject(new Error('未从 ST 扩展打开'))
         return
       }
@@ -693,12 +763,26 @@ export const useWorkshopStore = defineStore('workshop', () => {
       const timer = setTimeout(() => {
         delete _pending[requestKey]
         stConnected.value = false
+        console.warn('[Workshop] 请求超时，连接状态已重置:', {
+          type,
+          requestKey,
+        })
         reject(new Error('请求超时（20秒），连接已重置'))
       }, 20000)
 
       _pending[requestKey] = { resolve, reject, timer }
       // 使用 JSON 深拷贝，确保 Vue reactive proxy 转换为纯对象，避免 DataCloneError
       const plainPayload = JSON.parse(JSON.stringify(payload))
+      console.log('[Workshop] 发送消息到 ST 扩展:', {
+        type,
+        requestKey,
+        payload: plainPayload,
+        target: targetWindow === _stExtensionWindow
+          ? 'saved_extension'
+          : targetWindow === window.opener
+            ? 'opener'
+            : 'parent',
+      })
       targetWindow.postMessage({ type, payload: plainPayload }, '*')
     })
   }
@@ -706,28 +790,27 @@ export const useWorkshopStore = defineStore('workshop', () => {
   // 初始化 ST 扩展模式（postMessage 握手）
   async function initStExtensionMode() {
     if (stConnected.value) {
+      console.log('[Workshop] 已处于连接状态，跳过重复初始化')
       return // 已连接，幂等
     }
 
     // 始终设置监听器，等待扩展发送 opener 引用
     _setupMessageListener()
+    console.log('[Workshop] 开始初始化 ST 扩展握手:', {
+      hasOpener: !!(window.opener && window.opener !== window),
+      hasParent: !!(window.parent && window.parent !== window),
+    })
     
     // 弹窗模式：如果有 window.opener，尝试发送 ping
     if (window.opener && window.opener !== window) {
-      try {
-        window.opener.postMessage({ type: 'workshop_ping', payload: {} }, '*')
-      } catch (err) {
-        console.error('[Workshop] postMessage 到 opener 失败:', err)
-      }
+      console.log('[Workshop] 向 opener 发送初始 workshop_ping')
+      window.opener.postMessage({ type: 'workshop_ping', payload: {} }, '*')
     }
 
     // iframe 模式：如果在 iframe 中，尝试向父窗口发送 ping
     if (window.parent && window.parent !== window) {
-      try {
-        window.parent.postMessage({ type: 'workshop_ping', payload: {} }, '*')
-      } catch (err) {
-        console.error('[Workshop] postMessage 到 parent 失败:', err)
-      }
+      console.log('[Workshop] 向 parent 发送初始 workshop_ping')
+      window.parent.postMessage({ type: 'workshop_ping', payload: {} }, '*')
     }
   }
 
@@ -743,7 +826,6 @@ export const useWorkshopStore = defineStore('workshop', () => {
         subscribedPacksInST.value = map
       }
     } catch (err) {
-      console.error('[Workshop] ST 扫描失败:', err)
       subscribedPacksInST.value = {}
     }
   }
@@ -754,7 +836,6 @@ export const useWorkshopStore = defineStore('workshop', () => {
       const result = await _sendToOpener('workshop_check_character', {}, `check_char_${++_requestCounter}`)
       return { hasCharacter: result && result.hasCharacter }
     } catch (err) {
-      console.error('[Workshop] 检查角色卡状态失败:', err)
       return { hasCharacter: false }
     }
   }
@@ -807,7 +888,6 @@ export const useWorkshopStore = defineStore('workshop', () => {
       }
       return result && result.success
     } catch (err) {
-      console.error('[Workshop] ST 扩展订阅失败:', err)
       stNotification.value = { type: 'error', message: '订阅失败：' + err.message }
       return false
     }
@@ -823,9 +903,6 @@ export const useWorkshopStore = defineStore('workshop', () => {
         hasCharacter,  // 传递角色卡状态，让扩展端决定删除范围
       }, `unsubscribe_${++_requestCounter}`)
 
-      console.log(result);
-      
-
       if (result && result.success) {
         const updated = { ...subscribedPacksInST.value }
         delete updated[packId]
@@ -836,7 +913,6 @@ export const useWorkshopStore = defineStore('workshop', () => {
       }
       return result && result.success
     } catch (err) {
-      console.error('[Workshop] ST 扩展取消订阅失败:', err)
       stNotification.value = { type: 'error', message: '取消订阅失败：' + err.message }
       return false
     }
@@ -858,7 +934,6 @@ export const useWorkshopStore = defineStore('workshop', () => {
       }
       return result && result.success
     } catch (err) {
-      console.error('[Workshop] ST 扩展增量同步失败:', err)
       stNotification.value = { type: 'error', message: '同步失败：' + err.message }
       return false
     }
@@ -876,8 +951,6 @@ export const useWorkshopStore = defineStore('workshop', () => {
       if (res && res.success) {
         currentCharWorldbooks.value = { primary: res.primary, additional: res.additional }
       }
-    } catch (err) {
-      console.error('[Workshop] 获取当前角色世界书失败:', err)
     } finally {
       dynamicWorldbooksLoading.value = false
     }
@@ -891,7 +964,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
         worldbookEntriesMap.value = { ...worldbookEntriesMap.value, [name]: res.entries }
       }
     } catch (err) {
-      console.error(`[Workshop] 获取世界书「${name}」条目失败:`, err)
+      // 静默失败
     }
   }
 
@@ -1279,6 +1352,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
     currentCharWorldbooks,
     worldbookEntriesMap,
     dynamicWorldbooksLoading,
+    workshopMetaMap,
     workshops,
     workshopsLoading,
     mySubscriptions,
@@ -1294,7 +1368,9 @@ export const useWorkshopStore = defineStore('workshop', () => {
     fetchPack,
     fetchEntry,
     fetchWorkshops,
+    fetchWorkshopBySlug,
     fetchMySubscriptions,
+    resetUserState,
     toggleLike,
     toggleSubscribe,
     createPack,
@@ -1309,6 +1385,7 @@ export const useWorkshopStore = defineStore('workshop', () => {
     removePackFromWorldbook,
     setWorldbookName,
     loadWorldbookForSection,
+    getWorkshopBySlug,
     initStExtensionMode,
     fetchWorldbookList,
     fetchCurrentWorldbooks,

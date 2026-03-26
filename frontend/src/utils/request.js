@@ -36,6 +36,7 @@ request.interceptors.response.use(
         if (response) {
             const { status, data } = response
             let errorMsg = data?.error || '请求失败'
+            const hadToken = !!localStorage.getItem(TOKEN_KEY)
 
             // 特殊错误类型：需要角色卡环境，显示更久
             const isRequiresCharacterCard = errorMsg === 'requires_character_card'
@@ -45,11 +46,15 @@ request.interceptors.response.use(
 
             switch (status) {
                 case 401:
-                    console.warn('[Axios] 未授权，清除本地认证状态')
-                    localStorage.removeItem(TOKEN_KEY)
-                    localStorage.removeItem('workshop_auth_user')
-                    if (window.location.pathname !== '/' && !window.location.pathname.startsWith('/auth/') && !window.location.pathname.startsWith('/admin')) {
-                        window.location.href = '/'
+                    if (hadToken) {
+                        console.warn('[Axios] 未授权，清除本地认证状态')
+                        localStorage.removeItem(TOKEN_KEY)
+                        localStorage.removeItem('workshop_auth_user')
+                        if (window.location.pathname !== '/' && !window.location.pathname.startsWith('/auth/') && !window.location.pathname.startsWith('/admin')) {
+                            window.location.href = '/'
+                        }
+                    } else {
+                        console.info('[Axios] 匿名请求返回 401，保持当前页面状态')
                     }
                     break
                 case 403:
@@ -65,7 +70,9 @@ request.interceptors.response.use(
                     console.error(`[Axios] 请求错误 (${status}):`, errorMsg)
             }
 
-            toast.error(errorMsg, isRequiresCharacterCard ? { duration: 5000 } : {})
+            if (!(status === 401 && !hadToken)) {
+                toast.error(errorMsg, isRequiresCharacterCard ? { duration: 5000 } : {})
+            }
 
             return Promise.reject(data?.error || error.message)
         }

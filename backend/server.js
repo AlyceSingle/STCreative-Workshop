@@ -140,8 +140,27 @@ app.get('/api/health', (req, res) => {
 // ─── 生产环境：托管前端静态文件 ───────────────────────────────────
 if (isProd) {
   const frontendDist = path.join(__dirname, '../frontend/dist');
-  app.use(express.static(frontendDist));
+  app.use(express.static(frontendDist, {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+        return;
+      }
+
+      if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        return;
+      }
+
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+    },
+  }));
   app.get('/*splat', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     res.sendFile(path.join(frontendDist, 'index.html'));
   });
 }

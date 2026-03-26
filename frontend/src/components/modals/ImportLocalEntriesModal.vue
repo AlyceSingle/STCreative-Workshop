@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { useWorkshopStore } from '@/stores/workshop'
-import SearchSelect from './common/SearchSelect.vue'
+import SearchSelect from '../common/SearchSelect.vue'
 
 const props = defineProps({
   visible: {

@@ -77,7 +77,7 @@ const restoredViewState = restoreWorkshopViewState()
 const workshopSlug = computed(() => typeof route.query.workshop === 'string' ? route.query.workshop : null)
 
 const currentWorkshop = computed(() =>
-  workshopStore.workshops.find(w => w.slug === workshopSlug.value) || null
+  workshopStore.getWorkshopBySlug(workshopSlug.value) || null
 )
 const workshopLabel = computed(() =>
   currentWorkshop.value?.name || workshopSlug.value || '全部'
@@ -324,6 +324,10 @@ async function load(page = 1) {
 async function ensureWorkshopContext(force = false) {
   await workshopStore.initStExtensionMode()
 
+  if (workshopSlug.value) {
+    await workshopStore.fetchWorkshopBySlug(workshopSlug.value)
+  }
+
   if (force || !workshopStore.workshops.length) {
     await workshopStore.fetchWorkshops()
   }
@@ -333,6 +337,16 @@ async function ensureWorkshopContext(force = false) {
   }
 }
 
+async function refreshLoginScopedData() {
+  if (!authStore.isLoggedIn) {
+    workshopStore.resetUserState()
+    return
+  }
+
+  await workshopStore.fetchMySubscriptions()
+  await workshopStore.fetchAllSubscribedPackChanges()
+}
+
 async function initializeWorkshopView() {
   await ensureWorkshopContext()
 
@@ -340,8 +354,7 @@ async function initializeWorkshopView() {
 
   if (canReuseLoadedView(targetPage)) {
     viewStateReady.value = true
-    await workshopStore.fetchMySubscriptions()
-    await workshopStore.fetchAllSubscribedPackChanges()
+    await refreshLoginScopedData()
     await restoreScrollPosition()
     return
   }
@@ -349,16 +362,14 @@ async function initializeWorkshopView() {
   await load(targetPage)
   viewStateReady.value = true
   await workshopStore.scanSubscribedPacks()
-  await workshopStore.fetchMySubscriptions()
-  await workshopStore.fetchAllSubscribedPackChanges()
+  await refreshLoginScopedData()
 }
 
 async function refreshWorkshopView() {
   await ensureWorkshopContext(true)
   await load(workshopStore.pagination.page || 1)
   await workshopStore.scanSubscribedPacks()
-  await workshopStore.fetchMySubscriptions()
-  await workshopStore.fetchAllSubscribedPackChanges()
+  await refreshLoginScopedData()
 
   if (workshopStore.stConnected && workshopSlug.value) {
     await autoMapWorldbook()
@@ -375,6 +386,17 @@ watch(workshopSlug, (newSlug) => {
     workshopStore.loadWorldbookForSection(newSlug)
   }
   worldbookEditing.value = false
+})
+
+watch(() => authStore.user?.id, async (newUserId, oldUserId) => {
+  if (!viewStateReady.value || newUserId === oldUserId) return
+
+  if ((!oldUserId && newUserId) || (oldUserId && !newUserId)) {
+    await refreshWorkshopView()
+    return
+  }
+
+  await refreshLoginScopedData()
 })
 
 onMounted(async () => {

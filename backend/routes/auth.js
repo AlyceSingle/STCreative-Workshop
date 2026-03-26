@@ -4,6 +4,66 @@ const { getDb } = require('../db/init');
 const { signToken, verifyToken, storePendingToken, consumePendingToken } = require('../utils/jwt');
 const router = express.Router();
 
+function buildOauthState(query) {
+  const state = {};
+
+  if (query.popup === '1') {
+    state.popup = '1';
+  }
+
+  if (query.authKey) {
+    state.authKey = String(query.authKey);
+  }
+
+  if (query.returnTo) {
+    state.returnTo = String(query.returnTo);
+  }
+
+  if (Object.keys(state).length === 0) {
+    return '';
+  }
+
+  return Buffer.from(JSON.stringify(state), 'utf8').toString('base64url');
+}
+
+function sanitizeReturnTo(returnTo) {
+  const value = String(returnTo || '').trim();
+  if (!value) {
+    return '';
+  }
+
+  if (!value.startsWith('/') || value.startsWith('//')) {
+    return '';
+  }
+
+  return value;
+}
+
+function buildFrontendRedirectUrl(frontendUrl, returnTo, loginStatus) {
+  const safeReturnTo = sanitizeReturnTo(returnTo) || '/';
+  const redirectUrl = new URL(safeReturnTo, frontendUrl);
+
+  if (loginStatus) {
+    redirectUrl.searchParams.set('login', loginStatus);
+  }
+
+  return redirectUrl.toString();
+}
+
+function parseOauthState(stateValue) {
+  if (!stateValue) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(Buffer.from(String(stateValue), 'base64url').toString('utf8'));
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (err) {
+    console.warn('[Auth] 解析 OAuth state 失败:', err.message);
+    return {};
+  }
+}
+
 // 发起 Discord OAuth2 授权
 // - popup=1：传统弹窗模式
 // - authKey=xxx：JWT 模式，OAuth 完成后通过此 key 传递 token
@@ -16,7 +76,13 @@ router.get('/discord', (req, res, next) => {
   if (req.query.authKey) {
     req.session.authKey = req.query.authKey;
   }
-  passport.authenticate('discord')(req, res, next);
+  if (req.query.returnTo) {
+    req.session.authReturnTo = sanitizeReturnTo(req.query.returnTo);
+  }
+
+  const oauthState = buildOauthState(req.query);
+  const authOptions = oauthState ? { state: oauthState } : {};
+  passport.authenticate('discord', authOptions)(req, res, next);
 });
 
 // OAuth 完成后返回自动关闭的 HTML 页面（弹窗模式用）
@@ -28,18 +94,23 @@ function sendPopupCloseHtml(res, success, frontendUrl) {
 }
 
 // JWT 模式：返回一个自动关闭的页面
-function sendJwtModeCloseHtml(res) {
+function sendJwtModeCloseHtml(res, success) {
   res.send(`<!DOCTYPE html>
 <html>
-<head><title>登录成功</title></head>
+<head><title>${success ? '登录成功' : '登录失败'}</title></head>
 <body>
-<p>登录成功，正在关闭窗口...</p>
+<p>${success ? '登录成功，正在关闭窗口...' : '登录失败，请返回工坊重试。'}</p>
 <script>
+  try {
+    if (window.opener) {
+      window.opener.postMessage({ type: 'oauth_login_complete', success: ${success ? 'true' : 'false'} }, '*');
+    }
+  } catch (e) {}
   // 尝试关闭弹窗
   try { window.close(); } catch(e) {}
   // 如果无法关闭，显示提示
   setTimeout(function() {
-    document.body.innerHTML = '<p>登录成功！请手动关闭此窗口。</p>';
+    document.body.innerHTML = '<p>${success ? '登录成功！请手动关闭此窗口。' : '登录失败，请手动关闭此窗口。'}</p>';
   }, 500);
 </script>
 </body>
@@ -49,33 +120,36 @@ function sendJwtModeCloseHtml(res) {
 // Discord 回调
 router.get('/discord/callback', (req, res, next) => {
   passport.authenticate('discord', (err, user, info) => {
-    const isPopup = req.session && req.session.authPopup;
-    const authKey = req.session && req.session.authKey;
+    const state = parseOauthState(req.query.state);
+    const isPopup = state.popup === '1' || (req.session && req.session.authPopup);
+    const authKey = state.authKey || (req.session && req.session.authKey);
+    const returnTo = sanitizeReturnTo(state.returnTo || (req.session && req.session.authReturnTo));
     // 清除标记
     if (req.session) {
       delete req.session.authPopup;
       delete req.session.authKey;
+      delete req.session.authReturnTo;
     }
 
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
 
     if (err) {
       console.error('[Auth] Discord callback error:', err);
-      if (authKey) return sendJwtModeCloseHtml(res); // JWT 模式，前端会通过 poll 得知失败
+      if (authKey) return sendJwtModeCloseHtml(res, false); // JWT 模式，前端会通过 poll 得知失败
       if (isPopup) return sendPopupCloseHtml(res, false, frontendUrl);
-      return res.redirect(`${frontendUrl}?login=failed`);
+      return res.redirect(buildFrontendRedirectUrl(frontendUrl, returnTo, 'failed'));
     }
     if (!user) {
-      if (authKey) return sendJwtModeCloseHtml(res);
+      if (authKey) return sendJwtModeCloseHtml(res, false);
       if (isPopup) return sendPopupCloseHtml(res, false, frontendUrl);
-      return res.redirect(`${frontendUrl}?login=failed`);
+      return res.redirect(buildFrontendRedirectUrl(frontendUrl, returnTo, 'failed'));
     }
 
     // JWT 模式：生成 token 并存储，然后关闭弹窗
     if (authKey) {
       const token = signToken(user);
       storePendingToken(authKey, token, user);
-      return sendJwtModeCloseHtml(res);
+      return sendJwtModeCloseHtml(res, true);
     }
 
     // 传统模式：使用 session
@@ -83,10 +157,10 @@ router.get('/discord/callback', (req, res, next) => {
       if (loginErr) {
         console.error('[Auth] Login error:', loginErr);
         if (isPopup) return sendPopupCloseHtml(res, false, frontendUrl);
-        return res.redirect(`${frontendUrl}?login=failed`);
+        return res.redirect(buildFrontendRedirectUrl(frontendUrl, returnTo, 'failed'));
       }
       if (isPopup) return sendPopupCloseHtml(res, true, frontendUrl);
-      return res.redirect(frontendUrl);
+      return res.redirect(buildFrontendRedirectUrl(frontendUrl, returnTo));
     });
   })(req, res, next);
 });

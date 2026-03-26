@@ -37,7 +37,21 @@ async function logout() {
 }
 
 async function pollToken(authKey) {
-  const res = await fetch(`/auth/poll?key=${encodeURIComponent(authKey)}`)
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 8000)
+  let res
+
+  try {
+    res = await fetch(`/auth/poll?key=${encodeURIComponent(authKey)}`, {
+      method: 'GET',
+      credentials: 'include',
+      cache: 'no-store',
+      signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(timeoutId)
+  }
+
   return res.json()
 }
 

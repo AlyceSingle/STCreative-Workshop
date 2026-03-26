@@ -128,14 +128,41 @@ const VALID_ROLES = ['system', 'user', 'assistant'];
 
 // ── Workshop 路由 ────────────────────────────────────────────────────
 
-// GET /api/workshop/workshops — 获取所有工坊列表（需要登录）
-router.get('/workshops', requireAuth, (req, res) => {
+// GET /api/workshop/workshops — 获取所有工坊列表（公开，可选登录态）
+router.get('/workshops', optionalAuth, (req, res) => {
   const db = getDb();
   try {
     const rows = db.prepare(`SELECT * FROM workshops WHERE status = 'active' ORDER BY id ASC`).all();
     res.json({ data: rows.map(formatWorkshop) });
   } catch (err) {
     console.error('[Workshop] 获取工坊列表失败:', err);
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
+
+// GET /api/workshop/workshops/by-slug/:slug — 根据 slug 获取单个工坊（公开，可选登录态）
+router.get('/workshops/by-slug/:slug', optionalAuth, (req, res) => {
+  const db = getDb();
+  const slug = String(req.params.slug || '').trim();
+
+  if (!slug) {
+    return res.status(400).json({ error: '工坊标识不能为空' });
+  }
+
+  try {
+    const row = db.prepare(`
+      SELECT * FROM workshops
+      WHERE slug = ? AND status = 'active'
+      LIMIT 1
+    `).get(slug);
+
+    if (!row) {
+      return res.status(404).json({ error: '工坊不存在' });
+    }
+
+    res.json({ data: formatWorkshop(row) });
+  } catch (err) {
+    console.error('[Workshop] 根据 slug 获取工坊失败:', err);
     res.status(500).json({ error: '服务器内部错误' });
   }
 });
@@ -239,7 +266,7 @@ router.delete('/workshops/:id', requireAuth, (req, res) => {
 // ── Pack 路由 ────────────────────────────────────────────────────────
 
 // GET /api/workshop — 获取 pack 列表，按热度排序（like_count + sub_count）
-router.get('/', requireAuth, (req, res) => {
+router.get('/', optionalAuth, (req, res) => {
   const db = getDb();
   const page = Math.max(1, parseInt(req.query.page) || 1);
   const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
@@ -329,7 +356,7 @@ router.get('/', requireAuth, (req, res) => {
 });
 
 // GET /api/workshop/packs/:packId — 获取单个 pack 详情（含条目列表）
-router.get('/packs/:packId', requireAuth, (req, res) => {
+router.get('/packs/:packId', optionalAuth, (req, res) => {
   const db = getDb();
   const packId = parseInt(req.params.packId);
   if (isNaN(packId)) return res.status(400).json({ error: '无效的模组 ID' });
@@ -1285,4 +1312,3 @@ router.get('/packs/:packId/changes', requireAuth, (req, res) => {
 });
 
 module.exports = router;
-
