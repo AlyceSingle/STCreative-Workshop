@@ -57,6 +57,8 @@ async function handleSubmit() {
 
   saving.value = false
   if (result) {
+    // 刷新工坊列表以包含新创建的工坊
+    await workshopStore.fetchWorkshops()
     // 创作者创建的工坊需等待审批，展示成功提示而不是跳转
     submitted.value = true
   }

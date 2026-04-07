@@ -32,6 +32,12 @@ const bridgeState = hostWindow[WS_BRIDGE_KEY] || {
   initTimer: null,
   oauthCleanup: null,
   cacheBustToken: null,
+  // 拖拽状态
+  isDragging: false,
+  dragStartX: 0,
+  dragStartY: 0,
+  buttonStartX: 0,
+  buttonStartY: 0,
 };
 
 hostWindow[WS_BRIDGE_KEY] = bridgeState;
@@ -203,9 +209,16 @@ function wsEnsureStyle() {
       display: flex;
       align-items: center;
       justify-content: center;
-      cursor: pointer;
+      cursor: grab;
       z-index: 2147483640;
       transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
+      user-select: none;
+      touch-action: none;
+    }
+
+    #${WS_FLOAT_BUTTON_ID}.dragging {
+      cursor: grabbing;
+      transition: none;
     }
 
     #${WS_FLOAT_BUTTON_ID}:hover {
@@ -432,6 +445,90 @@ function wsUpdateButtonState() {
   status.setAttribute('title', bridgeState.connected ? '已连接创意工坊' : '等待连接创意工坊');
 }
 
+function wsStartDrag(event) {
+  const button = hostDocument.getElementById(WS_FLOAT_BUTTON_ID);
+  if (!button) return;
+
+  // 阻止默认行为和冒泡
+  event.preventDefault();
+  event.stopPropagation();
+
+  bridgeState.isDragging = true;
+  button.classList.add('dragging');
+
+  // 记录初始鼠标位置和按钮位置
+  const clientX = event.clientX || (event.touches && event.touches[0] ? event.touches[0].clientX : 0);
+  const clientY = event.clientY || (event.touches && event.touches[0] ? event.touches[0].clientY : 0);
+  
+  bridgeState.dragStartX = clientX;
+  bridgeState.dragStartY = clientY;
+
+  const rect = button.getBoundingClientRect();
+  bridgeState.buttonStartX = rect.left;
+  bridgeState.buttonStartY = rect.top;
+
+  // 添加全局移动和释放监听器
+  hostDocument.addEventListener('mousemove', wsDrag);
+  hostDocument.addEventListener('mouseup', wsEndDrag);
+  hostDocument.addEventListener('touchmove', wsDrag);
+  hostDocument.addEventListener('touchend', wsEndDrag);
+}
+
+function wsDrag(event) {
+  if (!bridgeState.isDragging) return;
+
+  const button = hostDocument.getElementById(WS_FLOAT_BUTTON_ID);
+  if (!button) return;
+
+  const clientX = event.clientX || (event.touches && event.touches[0] ? event.touches[0].clientX : 0);
+  const clientY = event.clientY || (event.touches && event.touches[0] ? event.touches[0].clientY : 0);
+
+  const deltaX = clientX - bridgeState.dragStartX;
+  const deltaY = clientY - bridgeState.dragStartY;
+
+  const newLeft = bridgeState.buttonStartX + deltaX;
+  const newTop = bridgeState.buttonStartY + deltaY;
+
+  // 限制在视口范围内
+  const maxX = hostWindow.innerWidth - button.offsetWidth;
+  const maxY = hostWindow.innerHeight - button.offsetHeight;
+
+  const clampedLeft = Math.max(0, Math.min(newLeft, maxX));
+  const clampedTop = Math.max(0, Math.min(newTop, maxY));
+
+  button.style.left = clampedLeft + 'px';
+  button.style.top = clampedTop + 'px';
+  button.style.right = 'auto';
+}
+
+function wsEndDrag(event) {
+  if (!bridgeState.isDragging) return;
+
+  const button = hostDocument.getElementById(WS_FLOAT_BUTTON_ID);
+  if (button) {
+    button.classList.remove('dragging');
+  }
+
+  bridgeState.isDragging = false;
+
+  // 移除全局监听器
+  hostDocument.removeEventListener('mousemove', wsDrag);
+  hostDocument.removeEventListener('mouseup', wsEndDrag);
+  hostDocument.removeEventListener('touchmove', wsDrag);
+  hostDocument.removeEventListener('touchend', wsEndDrag);
+
+  // 如果拖动距离很小，视为点击
+  const clientX = event.clientX || (event.changedTouches && event.changedTouches[0] ? event.changedTouches[0].clientX : bridgeState.dragStartX);
+  const clientY = event.clientY || (event.changedTouches && event.changedTouches[0] ? event.changedTouches[0].clientY : bridgeState.dragStartY);
+  
+  const deltaX = Math.abs(clientX - bridgeState.dragStartX);
+  const deltaY = Math.abs(clientY - bridgeState.dragStartY);
+
+  if (deltaX < 5 && deltaY < 5) {
+    wsOpenWorkshop();
+  }
+}
+
 function wsEnsureFloatingButton() {
   wsEnsureStyle();
 
@@ -440,7 +537,7 @@ function wsEnsureFloatingButton() {
     button = hostDocument.createElement('button');
     button.id = WS_FLOAT_BUTTON_ID;
     button.type = 'button';
-    button.title = '打开创意工坊';
+    button.title = '打开创意工坊（可拖拽）';
     button.innerHTML = `
       <span class="stcw-ball-core">
         ${wsIcon('store', 20, '#ffffff')}
@@ -448,9 +545,9 @@ function wsEnsureFloatingButton() {
       </span>
     `;
 
-    button.addEventListener('click', () => {
-      wsOpenWorkshop();
-    });
+    // 绑定拖拽事件（鼠标和触摸）
+    button.addEventListener('mousedown', wsStartDrag);
+    button.addEventListener('touchstart', wsStartDrag, { passive: false });
 
     hostDocument.body.appendChild(button);
   }
@@ -507,15 +604,14 @@ function wsEnsureOverlay() {
 
   const iframe = overlay.querySelector(`#${WS_IFRAME_ID}`);
   iframe.addEventListener('load', () => {
+    const iframeUrl = iframe.getAttribute('src') || '';
     bridgeState.workshopWindow = iframe.contentWindow;
     bridgeState.connected = false;
     wsUpdateButtonState();
     wsRefreshOverlayUrl();
-    console.log('[ST创意工坊脚本] 工坊 iframe 已加载，开始握手:', {
-      url: iframe.getAttribute('src') || '',
-      sameAsWindow: bridgeState.workshopWindow === window,
-      sameAsParent: bridgeState.workshopWindow === hostWindow,
-    });
+    if (!iframeUrl || iframeUrl === 'about:blank') {
+      return;
+    }
     wsStartHandshake();
   });
 
@@ -524,7 +620,9 @@ function wsEnsureOverlay() {
 }
 
 function wsRefreshOverlayUrl() {
-  const overlay = wsEnsureOverlay();
+  const overlay = wsGetOverlayElement();
+  if (!overlay) return;
+
   const titleLine = overlay.querySelector('.stcw-modal-title-text span');
   if (titleLine) {
     titleLine.textContent = bridgeState.connected
@@ -546,15 +644,11 @@ function wsSetIframeUrl(forceReload) {
 
 function wsOpenWorkshop(forceReload) {
   wsEnsureFloatingButton();
-  wsRefreshOverlayUrl();
   const overlay = wsEnsureOverlay();
   overlay.setAttribute('data-open', 'true');
   bridgeState.overlayVisible = true;
-  console.log('[ST创意工坊脚本] 打开工坊浮层:', {
-    forceReload: !!forceReload,
-    url: wsGetWorkshopUrl(),
-  });
   wsSetIframeUrl(!!forceReload);
+  wsRefreshOverlayUrl();
 }
 
 function wsCloseWorkshop() {
@@ -567,7 +661,6 @@ function wsCloseWorkshop() {
 
 function wsStopHandshake() {
   if (bridgeState.handshakeTimer) {
-    console.log('[ST创意工坊脚本] 停止握手轮询');
     hostWindow.clearInterval(bridgeState.handshakeTimer);
     bridgeState.handshakeTimer = null;
   }
@@ -584,7 +677,6 @@ function wsStartHandshake() {
 
   if (!bridgeState.workshopWindow) return;
 
-  console.log('[ST创意工坊脚本] 开始发送 st_extension_opener');
   bridgeState.handshakeAttempts = 0;
   bridgeState.handshakeTimer = hostWindow.setInterval(() => {
     if (!bridgeState.workshopWindow) {
@@ -602,7 +694,6 @@ function wsStartHandshake() {
       );
 
       bridgeState.handshakeAttempts += 1;
-      console.log(`[ST创意工坊脚本] 发送 st_extension_opener (${bridgeState.handshakeAttempts}/40)`);
       if (bridgeState.handshakeAttempts >= 40) {
         wsStopHandshake();
       }
@@ -615,10 +706,6 @@ function wsStartHandshake() {
 
 function wsSendResult(type, payload) {
   if (!bridgeState.workshopWindow) return;
-  console.log('[ST创意工坊脚本] 回发消息到工坊:', {
-    type,
-    payload,
-  });
   bridgeState.workshopWindow.postMessage({ type, ...payload }, '*');
 }
 
@@ -786,10 +873,6 @@ async function wsHandleGetWorldbookEntries(payload) {
 
 async function wsHandleOpenOAuth(payload) {
   const authUrl = payload && payload.authUrl;
-  console.log('[ST创意工坊脚本] 收到 OAuth 打开请求:', {
-    hasAuthUrl: !!authUrl,
-    authUrl: authUrl || '',
-  });
   if (!authUrl) {
     wsSendResult('workshop_oauth_result', {
       success: false,
@@ -818,7 +901,6 @@ async function wsHandleOpenOAuth(payload) {
     return;
   }
 
-  console.log('[ST创意工坊脚本] 已打开 OAuth 弹窗');
 
   if (bridgeState.oauthCleanup) {
     bridgeState.oauthCleanup();
@@ -851,10 +933,6 @@ async function wsHandleOpenOAuth(payload) {
 
   const onMessage = (event) => {
     const data = event.data || {};
-    console.log('[ST创意工坊脚本] OAuth 弹窗消息:', {
-      type: data.type,
-      sameSource: event.source === popup,
-    });
     if (event.source === popup && data.type === 'oauth_login_complete') {
       finish(true, data.success === false ? '登录流程已返回，请继续等待结果' : '登录成功');
     }
@@ -1459,10 +1537,6 @@ async function wsHandleMessage(event) {
 
   const payload = data.payload || {};
   const type = String(rawType).trim();
-  console.log('[ST创意工坊脚本] 收到工坊消息:', {
-    type,
-    payload,
-  });
 
   if (type === 'workshop_ping') {
     const wasConnected = bridgeState.connected;
@@ -1470,7 +1544,6 @@ async function wsHandleMessage(event) {
     wsStopHandshake();
     wsUpdateButtonState();
     wsRefreshOverlayUrl();
-    console.log('[ST创意工坊脚本] 收到 workshop_ping，准备回发 workshop_pong');
     wsPostToWorkshop('workshop_pong', { connected: true });
     if (!wasConnected) {
       wsToast('success', '工坊已连接');
@@ -1539,10 +1612,6 @@ function wsBindHostMessageListener() {
   if (hostWindow !== window) {
     hostWindow.addEventListener('message', bridgeState.hostMessageHandler);
   }
-  console.log('[ST创意工坊脚本] 已注册消息监听器:', {
-    listenWindow: true,
-    listenHostWindow: hostWindow !== window,
-  });
 }
 
 function wsBindScriptButton() {
@@ -1573,10 +1642,8 @@ function wsInitialize() {
 
   bridgeState.initialized = true;
   wsEnsureFloatingButton();
-  wsEnsureOverlay();
   wsBindHostMessageListener();
   wsBindScriptButton();
-  console.log('[ST创意工坊脚本] 初始化完成');
 }
 
 function wsCleanup() {
